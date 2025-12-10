@@ -17,36 +17,85 @@ class MRAF_Image_Replacer
         global $wpdb;
         $updated_count = 0;
 
-        // Strip query parameters from URLs for searching (Elementor stores base URLs without ?mraf= params)
+        // Strip query parameters from URLs for searching
         $old_url_base = $old_url ? strtok($old_url, '?') : '';
         $new_url_base = $new_url ? strtok($new_url, '?') : '';
 
-        // Safety check - if URLs are invalid, return early
+        // Safety check - if URLs are invalid or same, return early
         if (empty($old_url_base) || empty($new_url_base)) {
             error_log("MRAF: Invalid URLs provided to update_elementor_urls - Old: '{$old_url}', New: '{$new_url}'");
             return 0;
         }
 
+        if ($old_url_base === $new_url_base) {
+            error_log("MRAF: URLs are identical, skipping Elementor update - URL: '{$old_url_base}'");
+            return 0;
+        }
+
         error_log("MRAF: Elementor URL replacement - Old base: '{$old_url_base}', New base: '{$new_url_base}'");
 
-        // Update both published data AND draft data
+        // DEBUG: Check if the old URL exists ANYWHERE in Elementor data
+        $debug_check = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key IN ('_elementor_data', '_elementor_draft') AND meta_value LIKE %s",
+            '%' . $wpdb->esc_like($old_url_base) . '%'
+        ));
+        error_log("MRAF: DEBUG - Found {$debug_check} Elementor rows containing old URL");
+
+        // DEBUG: Also check with escaped slashes (JSON stores URLs with escaped slashes)
+        $old_url_escaped = str_replace('/', '\\/', $old_url_base);
+        $debug_check_escaped = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key IN ('_elementor_data', '_elementor_draft') AND meta_value LIKE %s",
+            '%' . $wpdb->esc_like($old_url_escaped) . '%'
+        ));
+        error_log("MRAF: DEBUG - Found {$debug_check_escaped} Elementor rows containing escaped old URL");
+
+        // DEBUG: Check what URLs ARE in Elementor data (sample)
+        $sample_urls = $wpdb->get_var(
+            "SELECT SUBSTRING(meta_value, 1, 500) FROM {$wpdb->postmeta} WHERE meta_key = '_elementor_data' AND meta_value LIKE '%wp-content/uploads%' LIMIT 1"
+        );
+        if ($sample_urls) {
+            error_log("MRAF: DEBUG - Sample Elementor data (first 500 chars): " . $sample_urls);
+        }
+
+        // Update BOTH published data AND draft data
         $meta_keys = ['_elementor_data', '_elementor_draft'];
+        $affected_posts = [];
+
+        // Elementor JSON stores URLs with escaped slashes, so we need to search for both variants
+        $old_url_escaped = str_replace('/', '\\/', $old_url_base);
+        $new_url_escaped = str_replace('/', '\\/', $new_url_base);
 
         foreach ($meta_keys as $meta_key) {
+            // Search for BOTH regular and escaped URLs
             $results = $wpdb->get_results($wpdb->prepare(
                 "SELECT post_id, meta_id, meta_value
                 FROM {$wpdb->postmeta}
                 WHERE meta_key = %s
-                AND meta_value LIKE %s",
+                AND (meta_value LIKE %s OR meta_value LIKE %s)",
                 $meta_key,
-                '%' . $wpdb->esc_like($old_url_base) . '%'
+                '%' . $wpdb->esc_like($old_url_base) . '%',
+                '%' . $wpdb->esc_like($old_url_escaped) . '%'
             ));
 
             error_log("MRAF: Searching {$meta_key} for '{$old_url_base}' - Found " . count($results) . " rows");
 
-            // Additional debug: Show what we're actually searching for
             if (count($results) > 0) {
                 error_log("MRAF: Sample of first result - Post ID: {$results[0]->post_id}, Data length: " . strlen($results[0]->meta_value));
+                // Debug: Show a snippet of where the URL might be
+                $sample_data = $results[0]->meta_value;
+                if (strpos($sample_data, $old_url_base) !== false) {
+                    $pos = strpos($sample_data, $old_url_base);
+                    $snippet = substr($sample_data, max(0, $pos - 50), 200);
+                    error_log("MRAF: Found URL at position {$pos}, context: " . $snippet);
+                }
+            } else {
+                // Debug: Check if ANY image URLs exist in Elementor data for this meta_key
+                $any_results = $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value LIKE %s",
+                    $meta_key,
+                    '%wp-content/uploads%'
+                ));
+                error_log("MRAF: No matches for old URL. Total {$meta_key} rows with any upload URLs: {$any_results}");
             }
 
             foreach ($results as $row) {
@@ -65,7 +114,11 @@ class MRAF_Image_Replacer
                     continue;
                 }
 
-                $new_decoded = self::recursive_url_replace([$old_url_base], [$new_url_base], $decoded);
+                $new_decoded = self::recursive_url_replace(
+                    [$old_url_base, $old_url_escaped],
+                    [$new_url_base, $new_url_escaped],
+                    $decoded
+                );
 
                 if (!is_array($new_decoded) || empty($new_decoded)) {
                     continue;
@@ -78,7 +131,7 @@ class MRAF_Image_Replacer
                 }
 
                 $new_length = strlen($new_data);
-                $length_diff_percent = abs($new_length - $old_length) / $old_length * 100;
+                $length_diff_percent = abs($new_length - $old_length) / max($old_length, 1) * 100;
 
                 if ($length_diff_percent > 50) {
                     continue;
@@ -106,18 +159,8 @@ class MRAF_Image_Replacer
 
                     if ($result !== false) {
                         $updated_count++;
+                        $affected_posts[$post_id] = true;
                         error_log("MRAF: Updated {$meta_key} for post {$post_id} - Replaced '{$old_url_base}' with '{$new_url_base}'");
-
-                        // Clear ALL Elementor caches for this post
-                        delete_post_meta($post_id, '_elementor_css');
-                        delete_metadata('post', $post_id, '_elementor_css', '', false);
-
-                        // Clear Elementor draft and autosave data
-                        delete_post_meta($post_id, '_elementor_draft_status');
-
-                        // Force Elementor to reload data from DB
-                        wp_cache_delete($post_id . '_elementor', 'elementor');
-                        wp_cache_delete('elementor_' . $post_id, 'options');
                     } else {
                         error_log("MRAF: FAILED to update {$meta_key} for post {$post_id}");
                     }
@@ -127,23 +170,84 @@ class MRAF_Image_Replacer
             }
         }
 
-        // Force sync draft with published data for all affected posts
-        if ($updated_count > 0) {
-            self::sync_elementor_draft_with_data();
+        // Clear all Elementor caches for affected posts
+        foreach (array_keys($affected_posts) as $post_id) {
+            self::clear_elementor_post_cache($post_id);
         }
+
+        // Force sync: copy _elementor_data to _elementor_draft for affected posts
+        self::force_sync_drafts_with_data($affected_posts);
 
         return $updated_count;
     }
 
     /**
-     * Sync Elementor draft with published data
-     * This ensures the editor shows the latest changes
+     * Clear ALL Elementor caches for a specific post
+     */
+    private static function clear_elementor_post_cache($post_id)
+    {
+        // Delete Elementor CSS cache
+        delete_post_meta($post_id, '_elementor_css');
+        delete_metadata('post', $post_id, '_elementor_css', '', false);
+
+        // Delete editor-specific caches
+        delete_post_meta($post_id, '_elementor_page_assets');
+        delete_post_meta($post_id, '_elementor_inline_fonts');
+        delete_post_meta($post_id, '_elementor_draft_status');
+
+        // Clear Elementor object cache entries
+        wp_cache_delete($post_id . '_elementor', 'elementor');
+        wp_cache_delete('elementor_' . $post_id, 'options');
+        wp_cache_delete('elementor_data_' . $post_id, 'elementor');
+        wp_cache_delete('elementor_draft_' . $post_id, 'elementor');
+
+        // Clear transients
+        delete_transient('elementor_remote_info_api_data_' . $post_id);
+
+        // Force post cache refresh
+        clean_post_cache($post_id);
+
+        error_log("MRAF: Cleared all Elementor caches for post {$post_id}");
+    }
+
+    /**
+     * Force sync _elementor_draft with _elementor_data
+     * This ensures the editor shows the same content as the live site
+     */
+    private static function force_sync_drafts_with_data($affected_posts)
+    {
+        global $wpdb;
+
+        foreach (array_keys($affected_posts) as $post_id) {
+            // Get the current _elementor_data (which we just updated)
+            $elementor_data = get_post_meta($post_id, '_elementor_data', true);
+
+            if (empty($elementor_data)) {
+                continue;
+            }
+
+            // Check if draft exists
+            $draft_exists = metadata_exists('post', $post_id, '_elementor_draft');
+
+            if ($draft_exists) {
+                // Update existing draft with the new data
+                update_post_meta($post_id, '_elementor_draft', $elementor_data);
+                error_log("MRAF: Synced _elementor_draft with _elementor_data for post {$post_id}");
+            } else {
+                // Create draft if it doesn't exist
+                add_post_meta($post_id, '_elementor_draft', $elementor_data, true);
+                error_log("MRAF: Created _elementor_draft for post {$post_id}");
+            }
+        }
+    }
+
+    /**
+     * Sync Elementor draft with published data (legacy method for compatibility)
      */
     private static function sync_elementor_draft_with_data()
     {
         global $wpdb;
 
-        // Find all posts with _elementor_data but no _elementor_draft
         $posts_needing_draft = $wpdb->get_results("
             SELECT p.post_id, p.meta_value as elementor_data
             FROM {$wpdb->postmeta} p
@@ -157,7 +261,6 @@ class MRAF_Image_Replacer
         ");
 
         foreach ($posts_needing_draft as $post) {
-            // Copy _elementor_data to _elementor_draft
             add_post_meta($post->post_id, '_elementor_draft', $post->elementor_data, true);
             error_log("MRAF: Created _elementor_draft for post {$post->post_id}");
         }
@@ -167,6 +270,11 @@ class MRAF_Image_Replacer
     {
         global $wpdb;
         $updated_count = 0;
+
+        // Safety check
+        if (empty($old_url) || empty($new_url) || $old_url === $new_url) {
+            return 0;
+        }
 
         $builders = [
             '_wpb_shortcodes_custom_css' => 'text',
@@ -224,7 +332,7 @@ class MRAF_Image_Replacer
                 }
 
                 $new_length = strlen($new_data);
-                $length_diff_percent = abs($new_length - $old_length) / $old_length * 100;
+                $length_diff_percent = abs($new_length - $old_length) / max($old_length, 1) * 100;
 
                 if ($length_diff_percent > 50) {
                     continue;
@@ -328,6 +436,7 @@ class MRAF_Image_Replacer
             wp_cache_delete('elementor_attachment_' . $attachment_id, 'elementor');
             wp_cache_delete('attachment_' . $attachment_id, 'elementor');
             delete_transient('elementor_media_' . $attachment_id);
+            delete_transient('elementor_image_' . $attachment_id);
 
             // Force browser cache bust by updating attachment modified time
             wp_update_post([
@@ -377,6 +486,10 @@ class MRAF_Image_Replacer
                             }
                         }
                     }
+
+                    // Clear editor config cache (forces reload of attachment data)
+                    delete_transient('elementor_editor_config');
+                    delete_transient('elementor_editor_settings');
                 }
             } catch (\Throwable $e) {
             }
@@ -386,13 +499,17 @@ class MRAF_Image_Replacer
             }
 
             do_action('elementor/core/files/clear_cache');
+
+            // Clear all Elementor transients
+            global $wpdb;
+            $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_elementor_%'");
+            $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_elementor_%'");
         }
 
         // WPBakery Page Builder
         if (function_exists('wpb_js_remove_wpautop')) {
             delete_transient('vc_license');
 
-            // Clear WPBakery cache
             global $wpdb;
             $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_wpb_vc_css%'");
             $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_wpb_vc_css%'");
@@ -411,7 +528,6 @@ class MRAF_Image_Replacer
             et_core_clear_wp_cache();
         }
 
-        // Clear Divi static CSS files
         if (function_exists('et_pb_clear_builder_cache')) {
             et_pb_clear_builder_cache();
         }
@@ -463,5 +579,4 @@ class MRAF_Image_Replacer
         // Trigger action for third-party cache plugins
         do_action('mraf_after_cache_flush', $attachment_id);
     }
-
 }

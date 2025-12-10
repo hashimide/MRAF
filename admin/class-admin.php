@@ -59,7 +59,8 @@ class MRAF_Admin
         $predicted_base = $old_rel ? pathinfo($old_rel, PATHINFO_FILENAME) : ($file ? pathinfo((string) $file, PATHINFO_FILENAME) : 'file');
 
         echo '<p><strong>' . esc_html__('Current file', 'mraf') . ":</strong><br>";
-        if ($url) echo '<code style="word-break:break-all;display:inline-block;max-width:100%;">' . esc_html($url) . '</code><br>';
+        if ($url)
+            echo '<code style="word-break:break-all;display:inline-block;max-width:100%;">' . esc_html($url) . '</code><br>';
         echo '<small>' . esc_html(sprintf('MIME: %s | Ext: .%s', $mime ?: '—', $ext ?: '—')) . '</small></p>';
 
         wp_nonce_field(self::NONCE_ACTION, self::NONCE_NAME);
@@ -134,7 +135,8 @@ class MRAF_Admin
     public function admin_notices()
     {
         $list = get_transient(self::NOTICES_KEY);
-        if (!$list) return;
+        if (!$list)
+            return;
         delete_transient(self::NOTICES_KEY);
         foreach ($list as $n) {
             $class = ($n['type'] === 'updated') ? 'notice notice-success' : 'notice notice-error';
@@ -152,9 +154,11 @@ class MRAF_Admin
 
     public function maybe_handle_replace_on_edit_screen()
     {
-        if (empty($_POST['mraf_replace_submit']) || empty($_POST['mraf_do'])) return;
+        if (empty($_POST['mraf_replace_submit']) || empty($_POST['mraf_do']))
+            return;
 
-        if (!current_user_can('upload_files')) wp_die(__('You do not have permission to replace files.'));
+        if (!current_user_can('upload_files'))
+            wp_die(__('You do not have permission to replace files.'));
         if (!isset($_POST[self::NONCE_NAME]) || !wp_verify_nonce($_POST[self::NONCE_NAME], self::NONCE_ACTION)) {
             wp_die(__('Security check failed.'));
         }
@@ -167,7 +171,8 @@ class MRAF_Admin
 
         delete_transient(self::DEBUG_KEY . '_' . $attachment_id);
         $this->dbg($attachment_id, 'php post_max_size=' . ini_get('post_max_size') . ' | upload_max_filesize=' . ini_get('upload_max_filesize') . ' | max_file_uploads=' . ini_get('max_file_uploads'));
-        if (isset($_SERVER['CONTENT_LENGTH'])) $this->dbg($attachment_id, 'request CONTENT_LENGTH=' . (int) $_SERVER['CONTENT_LENGTH']);
+        if (isset($_SERVER['CONTENT_LENGTH']))
+            $this->dbg($attachment_id, 'request CONTENT_LENGTH=' . (int) $_SERVER['CONTENT_LENGTH']);
 
         $update_refs = !empty($_POST['mraf_update_refs']);
         $keep_basename = !empty($_POST['mraf_keep_basename']);
@@ -183,11 +188,32 @@ class MRAF_Admin
             return;
         }
 
-        $old_url = wp_get_attachment_url($attachment_id);
-        $old_file = get_attached_file($attachment_id);
-        $old_meta = wp_get_attachment_metadata($attachment_id);
-        $this->dbg($attachment_id, 'Old URL: ' . ($old_url ?: '(none)'));
-        $this->dbg($attachment_id, 'Old file: ' . ($old_file ?: '(none)'));
+        // CRITICAL: Get original values DIRECTLY from database to avoid caching issues
+        global $wpdb;
+        $uploads = wp_get_upload_dir();
+        $uploads_basedir = trailingslashit($uploads['basedir']);
+        $uploads_baseurl = trailingslashit($uploads['baseurl']);
+
+        // Get fresh values using raw SQL to completely bypass WordPress caching
+        $old_rel = $wpdb->get_var($wpdb->prepare(
+            "SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_wp_attached_file' LIMIT 1",
+            $attachment_id
+        ));
+
+        // Get metadata directly from DB
+        $old_meta_raw = $wpdb->get_var($wpdb->prepare(
+            "SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_wp_attachment_metadata' LIMIT 1",
+            $attachment_id
+        ));
+        $old_meta = $old_meta_raw ? maybe_unserialize($old_meta_raw) : [];
+
+        // Build file path and URL from the rel path we just fetched
+        $old_file = $old_rel ? $uploads_basedir . $old_rel : '';
+        $old_url = $old_rel ? $uploads_baseurl . $old_rel : '';
+
+        $this->dbg($attachment_id, 'CAPTURED Original rel path (from DB): ' . $old_rel);
+        $this->dbg($attachment_id, 'CAPTURED Original file (built): ' . $old_file);
+        $this->dbg($attachment_id, 'CAPTURED Original URL (built): ' . $old_url);
 
         require_once ABSPATH . 'wp-admin/includes/file.php';
         $overrides = ['test_form' => false, 'mimes' => get_allowed_mime_types()];
@@ -203,7 +229,6 @@ class MRAF_Admin
         $new_mime = $upload['type'];
         $this->dbg($attachment_id, 'Uploaded tmp: ' . $new_tmp_file . ' | mime: ' . $new_mime);
 
-        $uploads = wp_get_upload_dir();
         if (!empty($uploads['error'])) {
             @unlink($new_tmp_file);
             $msg = 'Upload dir error: ' . sanitize_text_field($uploads['error']);
@@ -215,7 +240,6 @@ class MRAF_Admin
         $original_filename = sanitize_file_name($_FILES['mraf_file']['name']);
         $ext_new = strtolower(pathinfo($original_filename, PATHINFO_EXTENSION));
         $uploaded_base = pathinfo($original_filename, PATHINFO_FILENAME);
-        $old_rel = get_post_meta($attachment_id, '_wp_attached_file', true);
         $old_dir_rel = $old_rel ? dirname($old_rel) : '';
         $old_base = $old_rel ? pathinfo($old_rel, PATHINFO_FILENAME) : 'file';
         $target_dir = trailingslashit($uploads['basedir']) . ($old_dir_rel && '.' !== $old_dir_rel ? trailingslashit($old_dir_rel) : '');
@@ -326,12 +350,17 @@ class MRAF_Admin
             if (empty($meta['file'])) {
                 $meta['file'] = $new_rel;
             }
+            // Add timestamp to force cache invalidation
+            $meta['mraf_replaced'] = time();
             wp_update_attachment_metadata($attachment_id, $meta);
             $this->dbg($attachment_id, 'Fresh metadata saved with ' . count($meta['sizes'] ?? []) . ' sizes');
         } else {
             $this->dbg($attachment_id, 'No metadata generated; saving minimal meta.');
-            wp_update_attachment_metadata($attachment_id, ['file' => $new_rel, 'sizes' => []]);
+            wp_update_attachment_metadata($attachment_id, ['file' => $new_rel, 'sizes' => [], 'mraf_replaced' => time()]);
         }
+
+        // Get fresh metadata for URL replacement mapping
+        $new_meta = wp_get_attachment_metadata($attachment_id, true);
 
         clean_post_cache($attachment_id);
         if (function_exists('clean_attachment_cache')) {
@@ -341,9 +370,8 @@ class MRAF_Admin
         wp_cache_delete($attachment_id, 'post_meta');
         delete_post_meta($attachment_id, '_wp_attachment_backup_sizes');
 
-        // Force fresh data from database
-        $new_meta = wp_get_attachment_metadata($attachment_id, true);
-        $new_url = wp_get_attachment_url($attachment_id);
+        // Build new URL manually from the known new_rel to avoid any caching issues
+        $new_url = $uploads_baseurl . $new_rel;
 
         update_post_meta($attachment_id, '_mraf_last_replaced', time());
         do_action('mraf_after_image_replaced', $attachment_id, $old_url, $new_url);
@@ -354,12 +382,16 @@ class MRAF_Admin
         $new_title = str_replace(['-', '_'], ' ', $new_title);
         wp_update_post(['ID' => $attachment_id, 'post_title' => $new_title, 'post_name' => sanitize_title($new_title)]);
         $this->dbg($attachment_id, 'Attachment title updated to: ' . $new_title);
-        $this->dbg($attachment_id, 'New URL: ' . ($new_url ?: '(none)'));
+        $this->dbg($attachment_id, 'REPLACEMENT: Old URL: ' . $old_url);
+        $this->dbg($attachment_id, 'REPLACEMENT: New URL: ' . $new_url);
 
         $replacements = $this->build_url_replacements($old_url, $new_url, $old_meta, $new_meta);
         if ($update_refs && !empty($replacements)) {
+            $this->dbg($attachment_id, 'Total URL pairs to replace: ' . count($replacements));
             $stats = $this->replace_urls_everywhere($replacements, $attachment_id);
             $this->log_replacement_summary($attachment_id, $stats);
+        } else {
+            $this->dbg($attachment_id, 'Skipping URL reference updates - Old URL: ' . ($old_url ?: '(empty)') . ', New URL: ' . ($new_url ?: '(empty)') . ', Same: ' . ($old_url === $new_url ? 'yes' : 'no'));
         }
 
         $cache_instructions = '<strong>✅ Image replaced successfully!</strong><br>';
@@ -422,7 +454,8 @@ class MRAF_Admin
             'counts' => ['posts' => 0, 'postmeta' => 0, 'options' => 0, 'elementor' => 0, 'builders' => 0, 'instances' => 0],
         ];
 
-        if (empty($replacements)) return $stats;
+        if (empty($replacements))
+            return $stats;
 
         $search = wp_list_pluck($replacements, 'old');
         $replace = wp_list_pluck($replacements, 'new');
@@ -433,6 +466,8 @@ class MRAF_Admin
         $anything_changed = false;
 
         foreach ($replacements as $pair) {
+            $this->dbg($attachment_id, 'Processing pair: ' . $pair['old'] . ' -> ' . $pair['new']);
+
             $elementor_count = MRAF_Image_Replacer::update_elementor_urls($pair['old'], $pair['new'], $attachment_id);
             $stats['counts']['elementor'] += $elementor_count;
             if ($elementor_count > 0) {
@@ -489,7 +524,8 @@ class MRAF_Admin
                 $new = MRAF_Image_Replacer::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
                 if ($changed) {
                     $wpdb->update($wpdb->postmeta, ['meta_value' => $new], ['meta_id' => (int) $m->meta_id]);
-                    if (isset($m->post_id)) clean_post_cache((int) $m->post_id);
+                    if (isset($m->post_id))
+                        clean_post_cache((int) $m->post_id);
                     $anything_changed = true;
                     $matches = max(1, (int) $replaced_count);
                     $stats['postmeta'][] = ['meta_id' => (int) $m->meta_id, 'post_id' => isset($m->post_id) ? (int) $m->post_id : 0, 'meta_key' => $m->meta_key, 'post_title' => $m->post_title ?? '', 'post_type' => $m->post_type ?? '', 'matches' => $matches];
@@ -499,7 +535,7 @@ class MRAF_Admin
             }
         }
 
-        $safe_option_prefixes = ['widget_', 'sidebars_widgets', '_transient_', 'acf_', 'options_'];
+        $safe_option_prefixes = ['widget_', 'sidebars_widgets', '_transient_', 'acf_', 'options_', 'theme_mods_', 'gowild_'];
         $safe_option_names = ['upload_path', 'upload_url_path'];
 
         $option_where = implode(' OR ', array_fill(0, count($likes), 'option_value LIKE %s'));
@@ -521,10 +557,10 @@ class MRAF_Admin
                     }
                 }
 
-                $excluded_options = ['theme_mods_', 'custom_css_', 'nav_menu_', 'category_children', 'rewrite_rules'];
+                $excluded_options = ['custom_css_', 'nav_menu_', 'category_children', 'rewrite_rules', 'cron'];
                 $is_excluded = false;
                 foreach ($excluded_options as $excluded) {
-                    if (strpos($option_name, $excluded) === 0) {
+                    if (strpos($option_name, $excluded) === 0 || $option_name === $excluded) {
                         $is_excluded = true;
                         break;
                     }
@@ -540,7 +576,8 @@ class MRAF_Admin
                 $new = MRAF_Image_Replacer::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
                 if ($changed) {
                     $wpdb->update($wpdb->options, ['option_value' => $new], ['option_id' => (int) $o->option_id]);
-                    if (!empty($o->option_name)) wp_cache_delete($o->option_name, 'options');
+                    if (!empty($o->option_name))
+                        wp_cache_delete($o->option_name, 'options');
                     $anything_changed = true;
                     $matches = max(1, (int) $replaced_count);
                     $stats['options'][] = ['option_name' => $o->option_name, 'matches' => $matches];
@@ -550,7 +587,8 @@ class MRAF_Admin
             }
         }
 
-        if ($anything_changed) MRAF_Image_Replacer::flush_builder_caches($attachment_id);
+        if ($anything_changed)
+            MRAF_Image_Replacer::flush_builder_caches($attachment_id);
 
         return $stats;
     }
@@ -570,8 +608,15 @@ class MRAF_Admin
         }
 
         $counts = $stats['counts'] ?? ['posts' => 0, 'postmeta' => 0, 'options' => 0, 'elementor' => 0, 'builders' => 0, 'instances' => 0];
-        $this->dbg($attachment_id, sprintf('Content updated: %d post(s), %d meta row(s), %d option(s), %d Elementor page(s), %d page builder(s) | Total replacements: %d',
-            $counts['posts'] ?? 0, $counts['postmeta'] ?? 0, $counts['options'] ?? 0, $counts['elementor'] ?? 0, $counts['builders'] ?? 0, $counts['instances'] ?? 0));
+        $this->dbg($attachment_id, sprintf(
+            'Content updated: %d post(s), %d meta row(s), %d option(s), %d Elementor page(s), %d page builder(s) | Total replacements: %d',
+            $counts['posts'] ?? 0,
+            $counts['postmeta'] ?? 0,
+            $counts['options'] ?? 0,
+            $counts['elementor'] ?? 0,
+            $counts['builders'] ?? 0,
+            $counts['instances'] ?? 0
+        ));
 
         if (!empty($stats['posts'])) {
             $labels = array_map(function ($post) {
@@ -600,6 +645,12 @@ class MRAF_Admin
         } else {
             $this->dbg($attachment_id, 'Options touched: none.');
         }
+
+        if (!empty($stats['elementor'])) {
+            $this->dbg($attachment_id, 'Elementor updates: ' . count($stats['elementor']) . ' page(s)');
+        } else {
+            $this->dbg($attachment_id, 'Elementor updates: none.');
+        }
     }
 
     private function build_url_replacements($old_url, $new_url, $old_meta, $new_meta)
@@ -615,7 +666,8 @@ class MRAF_Admin
 
         if ($old_dir && !empty($old_meta['sizes'])) {
             foreach ($old_meta['sizes'] as $size_key => $info) {
-                if (empty($info['file'])) continue;
+                if (empty($info['file']))
+                    continue;
                 $old_size_url = $old_dir . ltrim($info['file'], '/');
                 $target_new = '';
 
@@ -656,9 +708,11 @@ class MRAF_Admin
 
     private function get_url_directory($url)
     {
-        if (!$url) return '';
+        if (!$url)
+            return '';
         $pos = strrpos($url, '/');
-        if (false === $pos) return '';
+        if (false === $pos)
+            return '';
         return substr($url, 0, $pos + 1);
     }
 }

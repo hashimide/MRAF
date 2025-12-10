@@ -79,9 +79,12 @@ class MRAF_Bulk_Replace
                     </button>
                 </div>
                 <div class="mraf-options-bar">
-                    <label><input type="checkbox" id="mraf-global-keep-basename"><?php esc_html_e('Keep original filenames (only change extension)', 'mraf'); ?></label>
-                    <label><input type="checkbox" id="mraf-global-update-refs" checked><?php esc_html_e('Update references in content', 'mraf'); ?></label>
-                    <label><input type="checkbox" id="mraf-global-create-backup" checked><?php esc_html_e('Create backups before replacing', 'mraf'); ?></label>
+                    <label><input type="checkbox"
+                            id="mraf-global-keep-basename"><?php esc_html_e('Keep original filenames (only change extension)', 'mraf'); ?></label>
+                    <label><input type="checkbox" id="mraf-global-update-refs"
+                            checked><?php esc_html_e('Update references in content', 'mraf'); ?></label>
+                    <label><input type="checkbox" id="mraf-global-create-backup"
+                            checked><?php esc_html_e('Create backups before replacing', 'mraf'); ?></label>
                 </div>
                 <div id="mraf-replace-list" class="mraf-replace-list"></div>
             </div>
@@ -89,7 +92,9 @@ class MRAF_Bulk_Replace
                 <div class="mraf-search-box">
                     <h3><?php esc_html_e('Find Images to Replace', 'mraf'); ?></h3>
                     <div class="mraf-search-filters">
-                        <input type="text" id="mraf-search-query" placeholder="<?php esc_attr_e('Search by image title or alt text...', 'mraf'); ?>" class="mraf-input">
+                        <input type="text" id="mraf-search-query"
+                            placeholder="<?php esc_attr_e('Search by image title or alt text...', 'mraf'); ?>"
+                            class="mraf-input">
                         <select id="mraf-search-type" class="mraf-select">
                             <option value=""><?php esc_html_e('All Types', 'mraf'); ?></option>
                             <option value="image/jpeg">jpg / jpeg</option>
@@ -129,7 +134,8 @@ class MRAF_Bulk_Replace
                             </button>
                         </div>
                     </div>
-                    <div id="mraf-debug-log" style="font-family:monospace;white-space:pre-wrap;background:#f8f9fa;border:1px solid #ddd;padding:16px;border-radius:4px;max-height:600px;overflow-y:auto;">
+                    <div id="mraf-debug-log"
+                        style="font-family:monospace;white-space:pre-wrap;background:#f8f9fa;border:1px solid #ddd;padding:16px;border-radius:4px;max-height:600px;overflow-y:auto;">
                         <?php
                         $dbg = get_transient(self::DEBUG_KEY);
                         if ($dbg && is_array($dbg)) {
@@ -146,7 +152,9 @@ class MRAF_Bulk_Replace
             <div id="mraf-progress-modal" class="mraf-modal" style="display:none;">
                 <div class="mraf-modal-content">
                     <h2><?php esc_html_e('Replacing Images...', 'mraf'); ?></h2>
-                    <div class="mraf-progress-bar"><div class="mraf-progress-fill" id="mraf-progress-fill"></div></div>
+                    <div class="mraf-progress-bar">
+                        <div class="mraf-progress-fill" id="mraf-progress-fill"></div>
+                    </div>
                     <p id="mraf-progress-text">0 / 0</p>
                     <div id="mraf-progress-log"></div>
                 </div>
@@ -288,29 +296,58 @@ class MRAF_Bulk_Replace
         }
 
         try {
-        // Capture the original attachment state BEFORE any file or meta operations happen.
-        $uploads_dir = wp_get_upload_dir();
-        $original_rel = get_post_meta($attachment_id, '_wp_attached_file', true);
-        $original_file = get_attached_file($attachment_id);
-        $original_meta = wp_get_attachment_metadata($attachment_id);
-        $original_url = $original_rel ? trailingslashit($uploads_dir['baseurl']) . $original_rel : wp_get_attachment_url($attachment_id);
+            global $wpdb;
 
-        if ($create_backup) {
-            $this->create_backup($attachment_id);
-        }
+            // Get upload directory info FIRST before any cache operations
+            $uploads_dir = wp_get_upload_dir();
+            $uploads_basedir = trailingslashit($uploads_dir['basedir']);
+            $uploads_baseurl = trailingslashit($uploads_dir['baseurl']);
 
-        $result = $this->replace_image_file(
-            $attachment_id,
-            $new_file_path,
-            $keep_basename,
-            $update_refs,
-            [
-                'file' => $original_file,
-                'meta' => $original_meta,
-                'rel'  => $original_rel,
-                'url'  => $original_url,
-            ]
-        );
+            // Get fresh values DIRECTLY from database using raw SQL to completely bypass WordPress caching
+            $original_rel = $wpdb->get_var($wpdb->prepare(
+                "SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_wp_attached_file' LIMIT 1",
+                $attachment_id
+            ));
+
+            // Get metadata directly from DB too
+            $original_meta_raw = $wpdb->get_var($wpdb->prepare(
+                "SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_wp_attachment_metadata' LIMIT 1",
+                $attachment_id
+            ));
+            $original_meta = $original_meta_raw ? maybe_unserialize($original_meta_raw) : [];
+
+            // Build file path and URL from the rel path we just fetched
+            $original_file = $original_rel ? $uploads_basedir . $original_rel : '';
+            $original_url = $original_rel ? $uploads_baseurl . $original_rel : '';
+
+            $this->dbg('CAPTURED Original rel path (from DB): ' . $original_rel);
+            $this->dbg('CAPTURED Original file (built): ' . $original_file);
+            $this->dbg('CAPTURED Original URL (built): ' . $original_url);
+            $this->dbg('CAPTURED Uploads baseurl: ' . $uploads_baseurl);
+
+            // Validate that we have what we need
+            if (empty($original_rel)) {
+                $this->dbg('ERROR: Could not find _wp_attached_file meta for attachment ' . $attachment_id);
+                throw new Exception(__('Could not determine original file path.', 'mraf'));
+            }
+
+            if ($create_backup) {
+                $this->create_backup($attachment_id);
+            }
+
+            $result = $this->replace_image_file(
+                $attachment_id,
+                $new_file_path,
+                $keep_basename,
+                $update_refs,
+                [
+                    'file' => $original_file,
+                    'meta' => $original_meta,
+                    'rel' => $original_rel,
+                    'url' => $original_url,
+                ]
+            );
+
             $result['debug_log'] = get_transient(self::DEBUG_KEY);
 
             // Clean up uploaded temp file if it differs from the new attachment path
@@ -339,21 +376,23 @@ class MRAF_Bulk_Replace
     {
         require_once ABSPATH . 'wp-admin/includes/image.php';
 
-        $snapshot = is_array($original_snapshot) ? $original_snapshot : [];
-        $old_file = $snapshot['file'] ?? get_attached_file($attachment_id);
-        $old_meta = $snapshot['meta'] ?? wp_get_attachment_metadata($attachment_id);
+        // TRUST the snapshot - don't re-fetch anything that could be cached incorrectly
+        if (empty($original_snapshot['file']) || empty($original_snapshot['url']) || empty($original_snapshot['rel'])) {
+            $this->dbg('ERROR: Original snapshot is incomplete - file: ' . ($original_snapshot['file'] ?? 'missing') . ', url: ' . ($original_snapshot['url'] ?? 'missing') . ', rel: ' . ($original_snapshot['rel'] ?? 'missing'));
+            throw new Exception(__('Could not determine original file information.', 'mraf'));
+        }
 
-        // Build old URL manually from file path to avoid cache issues, but prefer the captured value first
-        $uploads = wp_get_upload_dir();
-        $old_rel_path = array_key_exists('rel', $snapshot) ? $snapshot['rel'] : get_post_meta($attachment_id, '_wp_attached_file', true);
-        $old_url = isset($snapshot['url']) ? $snapshot['url'] : ($old_rel_path ? trailingslashit($uploads['baseurl']) . $old_rel_path : wp_get_attachment_url($attachment_id));
+        $old_file = $original_snapshot['file'];
+        $old_meta = $original_snapshot['meta'] ?? [];
+        $old_rel_path = $original_snapshot['rel'];
+        $old_url = $original_snapshot['url'];
 
-        $this->dbg('Old URL: ' . ($old_url ?: '(none)'));
-        $this->dbg('Old file: ' . ($old_file ?: '(none)'));
+        $this->dbg('Using snapshot - Old URL: ' . $old_url);
+        $this->dbg('Using snapshot - Old file: ' . $old_file);
+        $this->dbg('Using snapshot - Old rel: ' . $old_rel_path);
 
-        if (!$old_file) {
-            $this->dbg('ERROR: Original file not found');
-            throw new Exception(__('Original file not found.', 'mraf'));
+        if (!file_exists($old_file)) {
+            $this->dbg('WARNING: Original file does not exist on disk: ' . $old_file);
         }
 
         $uploads = wp_get_upload_dir();
@@ -490,26 +529,37 @@ class MRAF_Bulk_Replace
         wp_cache_delete($attachment_id, 'posts');
         wp_cache_delete($attachment_id, 'post_meta');
 
-        $new_url = wp_get_attachment_url($attachment_id);
-        $this->dbg('New URL: ' . ($new_url ?: '(none)'));
+        // Build new URL manually from the known new_rel to avoid any caching
+        $new_url = trailingslashit($uploads['baseurl']) . $new_rel;
+        $this->dbg('New URL (built manually): ' . $new_url);
 
         // Trigger action with correct new URL
         do_action('mraf_after_image_replaced', $attachment_id, $old_url, $new_url);
 
-        if ($update_refs && $old_url !== $new_url) {
+        // Update references - CRITICAL: Use the snapshot old_url, not a re-fetched one
+        if ($update_refs && $old_url && $new_url && $old_url !== $new_url) {
             $this->dbg('Updating URL references from old to new (including sizes)');
-            $this->dbg('Old URL: ' . $old_url);
-            $this->dbg('New URL: ' . $new_url);
+            $this->dbg('REPLACEMENT: Old URL: ' . $old_url);
+            $this->dbg('REPLACEMENT: New URL: ' . $new_url);
             $replacements = $this->build_url_replacements($old_url, $new_url, $old_meta, $meta);
             $this->dbg('Total URL pairs to replace: ' . count($replacements));
             foreach ($replacements as $pair) {
+                $this->dbg('Processing pair: ' . $pair['old'] . ' -> ' . $pair['new']);
                 $stats = $this->update_url_references($pair['old'], $pair['new']);
-                $this->dbg(sprintf('References updated for %s -> %s: %d post(s), %d meta row(s), %d Elementor page(s), %d builder(s), %d option(s), %d widget(s)',
-                    $pair['old'], $pair['new'],
-                    $stats['posts'] ?? 0, $stats['meta'] ?? 0, $stats['elementor'] ?? 0, $stats['builders'] ?? 0, $stats['options'] ?? 0, $stats['widgets'] ?? 0));
+                $this->dbg(sprintf(
+                    'References updated for %s -> %s: %d post(s), %d meta row(s), %d Elementor page(s), %d builder(s), %d option(s), %d widget(s)',
+                    $pair['old'],
+                    $pair['new'],
+                    $stats['posts'] ?? 0,
+                    $stats['meta'] ?? 0,
+                    $stats['elementor'] ?? 0,
+                    $stats['builders'] ?? 0,
+                    $stats['options'] ?? 0,
+                    $stats['widgets'] ?? 0
+                ));
             }
         } else {
-            $this->dbg('Skipping URL reference updates - Old URL: ' . $old_url . ', New URL: ' . $new_url . ', Update refs: ' . ($update_refs ? 'yes' : 'no'));
+            $this->dbg('Skipping URL reference updates - Old URL: ' . ($old_url ?: '(empty)') . ', New URL: ' . ($new_url ?: '(empty)') . ', Same: ' . ($old_url === $new_url ? 'yes' : 'no') . ', Update refs: ' . ($update_refs ? 'yes' : 'no'));
         }
 
         // Delete legacy files only after success (use backup path if present)
@@ -549,7 +599,8 @@ class MRAF_Bulk_Replace
 
         if ($old_dir && !empty($old_meta['sizes'])) {
             foreach ($old_meta['sizes'] as $size_key => $info) {
-                if (empty($info['file'])) continue;
+                if (empty($info['file']))
+                    continue;
                 $old_size_url = $old_dir . ltrim($info['file'], '/');
                 $target_new = '';
 
@@ -590,9 +641,11 @@ class MRAF_Bulk_Replace
 
     private function get_url_directory($url)
     {
-        if (!$url) return '';
+        if (!$url)
+            return '';
         $pos = strrpos($url, '/');
-        if (false === $pos) return '';
+        if (false === $pos)
+            return '';
         return substr($url, 0, $pos + 1);
     }
 
@@ -623,8 +676,7 @@ class MRAF_Bulk_Replace
 
         // Search by title and alt text
         if ($query) {
-            // Search across title, content, excerpt, guid (URL), and file/alt metas.
-            $where_cb = function($where) use ($query, $wpdb) {
+            $where_cb = function ($where) use ($query, $wpdb) {
                 $like = '%' . $wpdb->esc_like($query) . '%';
                 $where .= $wpdb->prepare(
                     " AND (
@@ -639,7 +691,11 @@ class MRAF_Bulk_Replace
                             AND pm.meta_value LIKE %s
                         )
                     )",
-                    $like, $like, $like, $like, $like
+                    $like,
+                    $like,
+                    $like,
+                    $like,
+                    $like
                 );
                 return $where;
             };
@@ -703,11 +759,16 @@ class MRAF_Bulk_Replace
     private function get_date_query($date)
     {
         switch ($date) {
-            case 'today': return ['after' => '1 day ago'];
-            case 'week': return ['after' => '1 week ago'];
-            case 'month': return ['after' => '1 month ago'];
-            case 'year': return ['after' => '1 year ago'];
-            default: return [];
+            case 'today':
+                return ['after' => '1 day ago'];
+            case 'week':
+                return ['after' => '1 week ago'];
+            case 'month':
+                return ['after' => '1 month ago'];
+            case 'year':
+                return ['after' => '1 year ago'];
+            default:
+                return [];
         }
     }
 
@@ -789,10 +850,18 @@ class MRAF_Bulk_Replace
 
         $stats = ['posts' => 0, 'meta' => 0, 'elementor' => 0, 'builders' => 0, 'options' => 0, 'widgets' => 0];
 
+        // Safety check - don't update if URLs are the same
+        if (empty($old_url) || empty($new_url) || $old_url === $new_url) {
+            $this->dbg('SKIPPED update_url_references: URLs are empty or identical');
+            return $stats;
+        }
+
         // Update post content
         $result = $wpdb->query($wpdb->prepare(
             "UPDATE {$wpdb->posts} SET post_content = REPLACE(post_content, %s, %s) WHERE post_content LIKE %s",
-            $old_url, $new_url, '%' . $wpdb->esc_like($old_url) . '%'
+            $old_url,
+            $new_url,
+            '%' . $wpdb->esc_like($old_url) . '%'
         ));
         $stats['posts'] = $result !== false ? $result : 0;
 
@@ -819,7 +888,9 @@ class MRAF_Bulk_Replace
             "UPDATE {$wpdb->postmeta} SET meta_value = REPLACE(meta_value, %s, %s)
             WHERE meta_value LIKE %s AND {$exclude_sql}
             AND meta_value NOT LIKE 'a:%' AND meta_value NOT LIKE 'O:%' AND meta_value NOT LIKE '{%'",
-            $old_url, $new_url, '%' . $wpdb->esc_like($old_url) . '%'
+            $old_url,
+            $new_url,
+            '%' . $wpdb->esc_like($old_url) . '%'
         ));
         $stats['meta'] = $result !== false ? $result : 0;
 
@@ -840,7 +911,6 @@ class MRAF_Bulk_Replace
             $changed = false;
             $replaced_count = 0;
 
-            // Handle serialized arrays/objects in meta boxes
             $new = MRAF_Image_Replacer::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
 
             if ($changed) {
@@ -853,12 +923,11 @@ class MRAF_Bulk_Replace
             }
         }
 
-        // Update theme options and widgets (for themes like GoWild)
+        // Update theme options and widgets
         $search = [$old_url];
         $replace = [$new_url];
         $like = '%' . $wpdb->esc_like($old_url) . '%';
 
-        // Safe option prefixes for theme data, widgets, ACF, etc.
         $safe_option_prefixes = ['widget_', 'sidebars_widgets', '_transient_', 'acf_', 'options_', 'theme_mods_', 'gowild_'];
         $safe_option_names = ['upload_path', 'upload_url_path'];
 
@@ -871,7 +940,6 @@ class MRAF_Bulk_Replace
         foreach ($opts as $o) {
             $option_name = $o->option_name;
 
-            // Check if this is a safe option to update
             $is_safe = in_array($option_name, $safe_option_names);
             if (!$is_safe) {
                 foreach ($safe_option_prefixes as $prefix) {
@@ -882,7 +950,6 @@ class MRAF_Bulk_Replace
                 }
             }
 
-            // Skip dangerous options that could break the site
             $excluded_options = ['custom_css_', 'nav_menu_', 'category_children', 'rewrite_rules', 'cron'];
             $is_excluded = false;
             foreach ($excluded_options as $excluded) {
@@ -900,7 +967,6 @@ class MRAF_Bulk_Replace
             $changed = false;
             $replaced_count = 0;
 
-            // Handle serialized data properly (widgets, theme settings, etc.)
             $new = MRAF_Image_Replacer::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
 
             if ($changed) {
@@ -909,7 +975,6 @@ class MRAF_Bulk_Replace
                     wp_cache_delete($o->option_name, 'options');
                 }
 
-                // Track widgets separately for better logging
                 if (strpos($option_name, 'widget_') === 0) {
                     $stats['widgets']++;
                 } else {
