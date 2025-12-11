@@ -334,8 +334,24 @@
             const self = this;
             const $item = $('[data-file-id="' + fileId + '"]');
 
-            // Title input change
-            $item.find('.mraf-title-input').on('input', function() {
+            // Title input change - use a debounce approach and only sanitize on blur
+            const $titleInput = $item.find('.mraf-title-input');
+
+            $titleInput.on('input', function() {
+                const title = $(this).val();
+                // Just update the preview, don't modify the input value while typing
+                const sanitized = self.sanitizeTitle(title);
+                $item.find('.mraf-preview-filename').text(sanitized + '.webp');
+
+                // Update in selectedFiles with sanitized version
+                const file = self.selectedFiles.find(f => f.id === fileId);
+                if (file) {
+                    file.title = sanitized;
+                }
+            });
+
+            // Sanitize on blur (when user leaves the field)
+            $titleInput.on('blur', function() {
                 const title = $(this).val();
                 const sanitized = self.sanitizeTitle(title);
                 $(this).val(sanitized);
@@ -361,11 +377,12 @@
 
         sanitizeTitle: function(title) {
             return title
-                .replace(/[^a-zA-Z0-9.\s-]/g, '')
-                .replace(/\s+/g, '-')
-                .replace(/-+/g, '-')
-                .replace(/\.+/g, '.')
-                .replace(/^-|-$/g, '');
+                .toLowerCase()
+                .replace(/[^a-z0-9.\s\-]/g, '')  // Keep only alphanumeric, dots, spaces, and hyphens
+                .replace(/\s+/g, '-')             // Convert spaces to hyphens
+                .replace(/-+/g, '-')              // Remove consecutive hyphens
+                .replace(/\.+/g, '.')             // Remove consecutive dots
+                .replace(/^[\-\.]+|[\-\.]+$/g, ''); // Remove leading/trailing hyphens and dots
         },
 
         formatFileSize: function(bytes) {

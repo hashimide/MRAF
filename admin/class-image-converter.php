@@ -648,14 +648,17 @@ class MRAF_Image_Converter
         // Replace spaces and underscores with hyphens
         $title = str_replace(['_', ' '], '-', $title);
 
-        // Remove any character that isn't alphanumeric or hyphen
-        $title = preg_replace('/[^a-z0-9\-]/', '', $title);
+        // Remove any character that isn't alphanumeric, hyphen, or dot
+        $title = preg_replace('/[^a-z0-9\-\.]/', '', $title);
 
         // Remove multiple consecutive hyphens
         $title = preg_replace('/-+/', '-', $title);
 
-        // Trim hyphens from start and end
-        $title = trim($title, '-');
+        // Remove multiple consecutive dots
+        $title = preg_replace('/\.+/', '.', $title);
+
+        // Trim hyphens and dots from start and end
+        $title = trim($title, '-.');
 
         // If empty after sanitization, generate a default name
         if (empty($title)) {
@@ -1480,7 +1483,7 @@ class MRAF_Image_Converter
 
         // Get parameters
         $attachment_id = isset($_POST['attachment_id']) ? intval($_POST['attachment_id']) : 0;
-        $new_title = isset($_POST['title']) ? sanitize_text_field($_POST['title']) : '';
+        $new_title = isset($_POST['title']) ? trim(wp_unslash($_POST['title'])) : '';
         $quality = isset($_POST['quality']) ? intval($_POST['quality']) : 85;
         $max_width = isset($_POST['max_width']) ? intval($_POST['max_width']) : 0;
         $enable_resize = isset($_POST['enable_resize']) && $_POST['enable_resize'] === 'true';
