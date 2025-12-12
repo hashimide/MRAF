@@ -252,6 +252,7 @@
             row.find('.mraf-file-input').click();
         });
 
+
         row.on('change', '.mraf-file-input', function (e) {
             const file = this.files[0];
             if (file) {
