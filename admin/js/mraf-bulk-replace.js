@@ -555,7 +555,7 @@
         // Show processing state
         row.addClass('mraf-row-processing');
         row.find('.mraf-replace-btn').prop('disabled', true).html('<span class="dashicons dashicons-update spin"></span> Processing...');
-        row.find('.mraf-row-status').html('<span class="mraf-status-processing">Processing...</span>');
+        row.find('.mraf-row-status').empty();
 
         $.post(mrafBulkData.ajaxUrl, data, function (response) {
             debugLog('Replace response:', response);
@@ -564,8 +564,19 @@
 
             if (response.success) {
                 row.addClass('mraf-row-success');
-                row.find('.mraf-row-status').html('<span class="mraf-status-success"><span class="dashicons dashicons-yes"></span> Replaced successfully!</span>');
-                row.find('.mraf-replace-btn').remove();
+
+                // Replace button with success message
+                row.find('.mraf-replace-btn').html(`
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Replaced successfully!
+                `).prop('disabled', true).css({
+                    'background': 'hsl(142.1 76.2% 36.3%)',
+                    'color': 'white',
+                    'cursor': 'not-allowed'
+                });
+
                 row.find('.mraf-upload-new').remove();
 
                 debugLog('Replacement successful for attachment:', attachmentId);
@@ -578,21 +589,21 @@
                         }, 1000);
                 }
 
-                // Set the "New Image" column to show the REPLACED image (with cache-busting timestamp)
+                // Set the "New Image" column to show the REPLACED image with compact layout
                 const preview = row.find('[data-section="new"]');
                 preview.html(`
-                    <div class="mraf-image-card">
-                        <div class="mraf-image-wrapper">
+                    <div class="mraf-image-card mraf-image-card-compact">
+                        <div class="mraf-image-wrapper-compact">
                             <img src="${response.data.new_url}?t=${Date.now()}" alt="${escapeHtml(response.data.new_title)}" loading="lazy">
                         </div>
                         <div class="mraf-image-details">
                             <div class="mraf-detail-row">
-                                <span class="mraf-detail-label">File:</span>
-                                <span class="mraf-detail-value">${escapeHtml(response.data.new_title)}</span>
+                                <span class="mraf-detail-label">Status:</span>
+                                <span class="mraf-detail-value" style="color: #00a32a; font-weight: 600;">✓ REPLACED</span>
                             </div>
                             <div class="mraf-detail-row">
-                                <span class="mraf-detail-label">Status:</span>
-                                <span class="mraf-detail-value" style="color: #00a32a;">✓ REPLACED</span>
+                                <span class="mraf-detail-label">File:</span>
+                                <span class="mraf-detail-value">${escapeHtml(response.data.new_title)}</span>
                             </div>
                             <div class="mraf-detail-row">
                                 <span class="mraf-detail-label">URL:</span>
