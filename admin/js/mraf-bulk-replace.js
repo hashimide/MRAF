@@ -754,12 +754,27 @@
             const isReplaced = !!image.replaced_at;
             const isInList = $('.mraf-replace-row[data-attachment-id="' + image.id + '"]').length > 0;
 
+            // Determine button state and text
+            let buttonText = 'Add to List';
+            let buttonDisabled = false;
+
+            if (isReplaced && isInList) {
+                buttonText = 'In List';
+                buttonDisabled = true;
+            } else if (isReplaced) {
+                buttonText = 'Replace Again';
+                buttonDisabled = false;
+            } else if (isInList) {
+                buttonText = 'In List';
+                buttonDisabled = true;
+            }
+
             const item = $(`
                 <div class="mraf-search-item ${isReplaced ? 'mraf-item-replaced' : ''} ${isInList ? 'mraf-item-in-list' : ''}" data-id="${image.id}">
                     <div class="mraf-search-thumb">
                         <img src="${thumbUrl}" alt="${escapeHtml(image.title)}" loading="lazy">
                         ${isReplaced ? '<span class="mraf-badge mraf-badge-replaced">✓ Replaced</span>' : ''}
-                        ${isInList && !isReplaced ? '<span class="mraf-badge mraf-badge-in-list">In List</span>' : ''}
+                        ${isInList ? '<span class="mraf-badge mraf-badge-in-list">In List</span>' : ''}
                     </div>
                     <div class="mraf-search-info">
                             <strong style="display:block; white-space: normal;" title="${escapeHtml(image.filename)}">${escapeHtml(image.filename)}</strong>
@@ -767,8 +782,8 @@
                             <span style="font-style: italic; color: #666; display:block;">Alt: ${escapeHtml(image.alt_text || '(none)')}</span>
                             <span>${image.dimensions} x ${image.mime_type.split('/') [1].toUpperCase()}</span>
                         </div>
-                    <button type="button" class="mraf-btn mraf-btn-primary mraf-add-to-list" ${isInList && !isReplaced ? 'disabled' : ''}>
-                        ${isReplaced ? 'Replace Again' : isInList ? 'In List' : 'Add to List'}
+                    <button type="button" class="mraf-btn mraf-btn-primary mraf-add-to-list" ${buttonDisabled ? 'disabled' : ''}>
+                        ${buttonText}
                     </button>
                 </div>
             `);
@@ -785,9 +800,19 @@
 
                 showToast('Image added to Manual Selection tab!', 'success');
 
+                // Update the item state
                 item.addClass('mraf-item-in-list');
-                item.find('.mraf-search-thumb .mraf-badge-in-list').remove();
-                item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
+                item.removeClass('mraf-item-replaced');
+
+                // Remove "Replaced" badge and add "In List" badge only
+                item.find('.mraf-badge-replaced').remove();
+
+                // Update badge - show "In List" badge if not already there
+                if (!item.find('.mraf-badge-in-list').length) {
+                    item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
+                }
+
+                // Update button state
                 button.text('In List').prop('disabled', true);
 
                 const manualTabBadge = $('.mraf-tab-btn[data-tab="manual"] .mraf-tab-badge');
