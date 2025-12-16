@@ -87,6 +87,15 @@ class MRAF_Bulk_Replace
                             checked><?php esc_html_e('Create backups before replacing', 'mraf'); ?></label>
                 </div>
                 <div id="mraf-replace-list" class="mraf-replace-list"></div>
+
+                <div class="mraf-progress-section" id="mraf-progress-section" style="display: none;">
+                    <div class="mraf-progress-bar">
+                        <div class="mraf-progress-fill" id="mraf-progress-fill"></div>
+                    </div>
+                    <p class="mraf-progress-text" id="mraf-progress-text">
+                        <?php echo esc_html__('Processing...', 'mraf'); ?>
+                    </p>
+                </div>
             </div>
             <div class="mraf-tab-content" data-tab="search">
                 <div class="mraf-search-box">
@@ -147,16 +156,6 @@ class MRAF_Bulk_Replace
                         }
                         ?>
                     </div>
-                </div>
-            </div>
-            <div id="mraf-progress-modal" class="mraf-modal" style="display:none;">
-                <div class="mraf-modal-content">
-                    <h2><?php esc_html_e('Replacing Images...', 'mraf'); ?></h2>
-                    <div class="mraf-progress-bar">
-                        <div class="mraf-progress-fill" id="mraf-progress-fill"></div>
-                    </div>
-                    <p id="mraf-progress-text">0 / 0</p>
-                    <div id="mraf-progress-log"></div>
                 </div>
             </div>
         </div>

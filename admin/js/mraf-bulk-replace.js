@@ -853,23 +853,23 @@
         }
     }
 
-    // Progress Modal
+    // Progress Section (inline like convert & replace)
     function showProgressModal(total) {
-        const modal = $('#mraf-progress-modal');
-        modal.find('#mraf-progress-text').text(`0 / ${total}`);
-        modal.find('#mraf-progress-fill').css('width', '0%');
-        modal.find('#mraf-progress-log').empty();
-        modal.fadeIn();
+        const $progressSection = $('#mraf-progress-section');
+        $progressSection.show();
+        updateProgressModal(0, total);
     }
 
     function updateProgressModal(completed, total) {
-        const percent = (completed / total) * 100;
-        $('#mraf-progress-fill').css('width', percent + '%');
-        $('#mraf-progress-text').text(`${completed} / ${total}`);
+        const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+        $('#mraf-progress-fill').css('width', percentage + '%').text(percentage + '%');
+        $('#mraf-progress-text').text('Processing: ' + completed + ' / ' + total + ' (' + percentage + '%)');
     }
 
     function hideProgressModal() {
-        $('#mraf-progress-modal').fadeOut();
+        setTimeout(function() {
+            $('#mraf-progress-section').fadeOut();
+        }, 1500);
     }
 
     // Utilities
