@@ -1274,6 +1274,19 @@ class MRAF_Image_Converter
                             <?php echo esc_html__('Search', 'mraf'); ?>
                         </button>
                     </div>
+
+                    <!-- Advanced Filtering Options -->
+                    <div class="mraf-advanced-filters">
+                        <label class="mraf-filter-checkbox">
+                            <input type="checkbox" id="mraf-filter-unconverted">
+                            <span class="mraf-checkbox-custom"></span>
+                            <span class="mraf-checkbox-label"><?php echo esc_html__('Show unconverted images only', 'mraf'); ?></span>
+                        </label>
+                        <button type="button" class="mraf-btn mraf-btn-secondary mraf-select-all-btn" id="mraf-select-all-format">
+                            <span class="dashicons dashicons-yes-alt"></span>
+                            <?php echo esc_html__('Select All Visible', 'mraf'); ?>
+                        </button>
+                    </div>
                     <div id="mraf-search-results" class="mraf-search-results"></div>
                 </div>
             </div>
@@ -1707,6 +1720,7 @@ class MRAF_Image_Converter
         $query = sanitize_text_field($_POST['query'] ?? '');
         $type = sanitize_text_field($_POST['type'] ?? '');
         $date = sanitize_text_field($_POST['date'] ?? '');
+        $unconverted_only = absint($_POST['unconverted_only'] ?? 0);
         $page = absint($_POST['page'] ?? 1);
         $per_page = 50;
         $where_cb = null;
@@ -1752,6 +1766,22 @@ class MRAF_Image_Converter
         // Filter by date
         if ($date) {
             $args['date_query'] = $this->get_date_query($date);
+        }
+
+        // Filter for unconverted images only
+        if ($unconverted_only) {
+            $args['meta_query'] = [
+                'relation' => 'OR',
+                [
+                    'key' => '_mraf_converted',
+                    'compare' => 'NOT EXISTS'
+                ],
+                [
+                    'key' => '_mraf_converted',
+                    'value' => '1',
+                    'compare' => '!='
+                ]
+            ];
         }
 
         $query_obj = new WP_Query($args);

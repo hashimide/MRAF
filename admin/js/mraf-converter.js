@@ -46,6 +46,10 @@
             this.$searchDate = $('#mraf-search-date');
             this.$searchBtn = $('#mraf-search-btn');
             this.$searchResults = $('#mraf-search-results');
+
+            // Advanced filter elements
+            this.$filterUnconverted = $('#mraf-filter-unconverted');
+            this.$selectAllFormatBtn = $('#mraf-select-all-format');
         },
 
         bindEvents: function() {
@@ -113,6 +117,24 @@
                 if (e.which === 13) {
                     self.performSearch(1, false);
                 }
+            });
+
+            // Advanced filters
+            this.$filterUnconverted.on('change', function() {
+                self.performSearch(1, false);
+            });
+
+            this.$searchType.on('change', function() {
+                self.performSearch(1, false);
+            });
+
+            this.$searchDate.on('change', function() {
+                self.performSearch(1, false);
+            });
+
+            // Select all visible images
+            this.$selectAllFormatBtn.on('click', function() {
+                self.selectAllVisibleImages();
             });
         },
 
@@ -610,6 +632,7 @@
             const query = this.$searchQuery.val();
             const type = this.$searchType.val();
             const date = this.$searchDate.val();
+            const unconvertedOnly = this.$filterUnconverted.is(':checked');
 
             const data = {
                 action: 'mraf_search_converter_images',
@@ -617,6 +640,7 @@
                 query: query,
                 type: type,
                 date: date,
+                unconverted_only: unconvertedOnly ? 1 : 0,
                 page: page
             };
 
@@ -683,6 +707,9 @@
                         </button>
                     </div>
                 `);
+
+                // Store image data on the element
+                item.data('image-data', image);
 
                 item.find('.mraf-add-to-convert').on('click', function(e) {
                     e.preventDefault();
@@ -760,6 +787,87 @@
                     self.performSearch(data.page + 1, true);
                 });
                 this.$searchResults.append(loadMoreBtn);
+            }
+        },
+
+        selectAllVisibleImages: function() {
+            const self = this;
+            let addedCount = 0;
+
+            // Find all "Add to Convert" buttons that are not disabled
+            this.$searchResults.find('.mraf-add-to-convert:not(:disabled)').each(function() {
+                const $btn = $(this);
+                const $item = $btn.closest('.mraf-search-item');
+                const image = $item.data('image-data');
+
+                if (!image) return;
+
+                const imageId = image.id;
+                const isInList = self.selectedFiles.some(f => f.attachment_id === imageId);
+                const wasReplaced = !!image.converted;
+
+                if (isInList && !wasReplaced) {
+                    return; // Skip if already in list
+                }
+
+                // Remove replaced badge if applicable
+                if (wasReplaced) {
+                    $item.removeClass('mraf-item-replaced');
+                    $item.find('.mraf-badge-replaced').remove();
+                }
+
+                // Create file data object from search result
+                const fileId = 'file-' + image.id + '-' + Date.now() + '-' + addedCount;
+                const fileData = {
+                    id: fileId,
+                    attachment_id: image.id,
+                    file_path: image.url,
+                    filename: image.filename,
+                    title: self.generateDefaultTitle(image.filename),
+                    width: image.width,
+                    height: image.height,
+                    filesize: image.filesize,
+                    preview_url: image.thumb,
+                    status: 'pending'
+                };
+
+                self.selectedFiles.push(fileData);
+
+                if (self.currentView === 'grid') {
+                    self.renderGridItem(fileData);
+                } else {
+                    self.renderListItem(fileData);
+                }
+
+                // Update button and item state
+                $btn.text(wasReplaced ? 'Replace Again' : '✓ Added').prop('disabled', true);
+                $item.addClass('mraf-item-in-list');
+                if (!wasReplaced) {
+                    $item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
+                } else {
+                    $item.find('.mraf-search-thumb .mraf-badge-in-list').remove();
+                    $item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
+                }
+
+                addedCount++;
+            });
+
+            // Update UI once at the end
+            if (addedCount > 0) {
+                self.updateUI();
+                self.updateManualTabCount();
+
+                // Highlight the manual tab badge
+                const $badge = $('#mraf-manual-count');
+                $badge.css({'background': '#00a32a', 'transform': 'scale(1.3)', 'transition': 'all 0.3s ease'});
+                setTimeout(function() {
+                    $badge.css({'background': '', 'transform': '', 'transition': 'all 0.3s ease'});
+                }, 1000);
+
+                // Show single notification
+                this.showNotice(`Added ${addedCount} image(s) to conversion list!`, 'success');
+            } else {
+                this.showNotice('No new images to add. They may already be in the list.', 'info');
             }
         },
 

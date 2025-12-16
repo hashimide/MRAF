@@ -125,6 +125,19 @@ class MRAF_Bulk_Replace
                             <?php esc_html_e('Search', 'mraf'); ?>
                         </button>
                     </div>
+
+                    <!-- Advanced Filtering Options -->
+                    <div class="mraf-advanced-filters">
+                        <label class="mraf-filter-checkbox">
+                            <input type="checkbox" id="mraf-filter-unreplaced">
+                            <span class="mraf-checkbox-custom"></span>
+                            <span class="mraf-checkbox-label"><?php echo esc_html__('Show unreplaced images only', 'mraf'); ?></span>
+                        </label>
+                        <button type="button" class="mraf-btn mraf-btn-secondary mraf-select-all-btn" id="mraf-select-all-visible">
+                            <span class="dashicons dashicons-yes-alt"></span>
+                            <?php echo esc_html__('Select All Visible', 'mraf'); ?>
+                        </button>
+                    </div>
                     <div id="mraf-search-results" class="mraf-search-results"></div>
                 </div>
             </div>
@@ -661,6 +674,7 @@ class MRAF_Bulk_Replace
         $query = sanitize_text_field($_POST['query'] ?? '');
         $type = sanitize_text_field($_POST['type'] ?? '');
         $date = sanitize_text_field($_POST['date'] ?? '');
+        $unreplaced_only = absint($_POST['unreplaced_only'] ?? 0);
         $page = absint($_POST['page'] ?? 1);
         $per_page = 50;
         $where_cb = null;
@@ -710,6 +724,22 @@ class MRAF_Bulk_Replace
         // Filter by date
         if ($date) {
             $args['date_query'] = $this->get_date_query($date);
+        }
+
+        // Filter for unreplaced images only
+        if ($unreplaced_only) {
+            $args['meta_query'] = [
+                'relation' => 'OR',
+                [
+                    'key' => '_mraf_replaced_at',
+                    'compare' => 'NOT EXISTS'
+                ],
+                [
+                    'key' => '_mraf_replaced_at',
+                    'value' => '',
+                    'compare' => '='
+                ]
+            ];
         }
 
         $query_obj = new WP_Query($args);

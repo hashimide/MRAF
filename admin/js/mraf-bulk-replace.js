@@ -717,14 +717,33 @@
                 performSearch(1, false);
             }
         });
+
+        // Advanced filters
+        $('#mraf-filter-unreplaced').on('change', function() {
+            performSearch(1, false);
+        });
+
+        $('#mraf-search-type').on('change', function() {
+            performSearch(1, false);
+        });
+
+        $('#mraf-search-date').on('change', function() {
+            performSearch(1, false);
+        });
+
+        // Select all visible images
+        $('#mraf-select-all-visible').on('click', function() {
+            selectAllVisibleImages();
+        });
     }
 
     function performSearch(page = 1, append = false) {
         const query = $('#mraf-search-query').val();
         const type = $('#mraf-search-type').val();
         const date = $('#mraf-search-date').val();
+        const unreplacedOnly = $('#mraf-filter-unreplaced').is(':checked');
 
-        debugLog('Performing search:', {query: query, type: type, date: date, page: page});
+        debugLog('Performing search:', {query: query, type: type, date: date, unreplacedOnly: unreplacedOnly, page: page});
 
         const data = {
             action: 'mraf_bulk_search_images',
@@ -732,6 +751,7 @@
             query: query,
             type: type,
             date: date,
+            unreplaced_only: unreplacedOnly ? 1 : 0,
             page: page
         };
 
@@ -817,6 +837,9 @@
                 </div>
             `);
 
+            // Store image data on the element
+            item.data('image-data', image);
+
             item.find('.mraf-add-to-list').on('click', function (e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -888,6 +911,70 @@
         setTimeout(function() {
             $('#mraf-progress-section').fadeOut();
         }, 1500);
+    }
+
+    // Select all visible images
+    function selectAllVisibleImages() {
+        let addedCount = 0;
+        const resultsContainer = $('#mraf-search-results');
+
+        // Find all "Add to List" buttons that are not disabled
+        resultsContainer.find('.mraf-add-to-list:not(:disabled)').each(function() {
+            const $btn = $(this);
+            const $item = $btn.closest('.mraf-search-item');
+            const image = $item.data('image-data');
+
+            if (!image) return;
+
+            const imageId = image.id;
+            const isInList = $('.mraf-replace-row[data-attachment-id="' + imageId + '"]').length > 0;
+            const wasReplaced = !!image.replaced_at;
+
+            if (isInList && !wasReplaced) {
+                return; // Skip if already in list
+            }
+
+            // Remove replaced badge if applicable
+            if (wasReplaced) {
+                $item.removeClass('mraf-item-replaced');
+                $item.find('.mraf-badge-replaced').remove();
+            }
+
+            // Add the row
+            debugLog('Adding image to list (bulk):', imageId);
+            const newRow = addReplaceRow(image);
+
+            // Update button and item state
+            $btn.text('In List').prop('disabled', true);
+            $item.addClass('mraf-item-in-list');
+            $item.removeClass('mraf-item-replaced');
+
+            // Update badge - show "In List" badge if not already there
+            if (!$item.find('.mraf-badge-in-list').length) {
+                $item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
+            }
+
+            addedCount++;
+        });
+
+        // Update UI once at the end
+        if (addedCount > 0) {
+            updateManualTabCount();
+
+            // Highlight the manual tab badge
+            const manualTabBadge = $('.mraf-tab-btn[data-tab="manual"] .mraf-tab-badge');
+            if (manualTabBadge.length) {
+                manualTabBadge.css({'background': '#00a32a', 'transform': 'scale(1.3)', 'transition': 'all 0.3s ease'});
+                setTimeout(function() {
+                    manualTabBadge.css({'background': '', 'transform': '', 'transition': 'all 0.3s ease'});
+                }, 1000);
+            }
+
+            // Show single notification
+            showToast('Added ' + addedCount + ' image(s) to Manual Selection tab!', 'success');
+        } else {
+            showToast('No new images to add. They may already be in the list.', 'info');
+        }
     }
 
     // Utilities
