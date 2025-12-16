@@ -525,7 +525,7 @@
         updateReplaceAllButton();
     }
 
-    function replaceSingleRow(row) {
+    function replaceSingleRow(row, callback) {
         const attachmentId = row.data('attachment-id');
         const newFilePath = row.data('new-file-path');
 
@@ -537,6 +537,7 @@
         if (!attachmentId || !newFilePath) {
             debugLog('ERROR: Missing data', {attachmentId: attachmentId, newFilePath: newFilePath});
             alert('Missing attachment ID or file path. Please refresh and try again.');
+            if (callback) callback(false);
             return;
         }
 
@@ -615,6 +616,9 @@
 
                 // Auto-refresh debug log
                 refreshDebugLog();
+
+                // Call callback with success
+                if (callback) callback(true);
             } else {
                 row.addClass('mraf-row-error');
                 const errorMsg = response.data && response.data.message ? response.data.message : mrafBulkData.replaceError;
@@ -626,6 +630,9 @@
 
                 // Auto-refresh debug log
                 refreshDebugLog();
+
+                // Call callback with failure
+                if (callback) callback(false);
             }
         }).fail(function (xhr, status, error) {
             debugLog('Replace AJAX error:', {xhr: xhr, status: status, error: error});
@@ -639,11 +646,14 @@
 
             // Auto-refresh debug log
             refreshDebugLog();
+
+            // Call callback with failure
+            if (callback) callback(false);
         });
     }
 
     function replaceAllMatched() {
-        const readyRows = $('.mraf-replace-row.mraf-row-ready');
+        const readyRows = $('.mraf-replace-row.mraf-row-ready').toArray();
 
         if (readyRows.length === 0) {
             alert('No rows ready to replace.');
@@ -654,28 +664,36 @@
 
         let completed = 0;
         const total = readyRows.length;
+        const queue = readyRows.slice(); // Create a copy of the array
 
-        // Show progress modal
+        // Show progress section
         showProgressModal(total);
 
-        readyRows.each(function (index) {
-            const row = $(this);
+        // Process rows sequentially
+        function processNext() {
+            if (queue.length === 0) {
+                // All done
+                debugLog('Bulk replacement completed:', completed, 'of', total);
+                hideProgressModal();
+                refreshDebugLog();
+                return;
+            }
 
-            setTimeout(function () {
-                debugLog('Processing row', (index + 1), 'of', total);
-                replaceSingleRow(row);
+            const row = $(queue.shift());
+            debugLog('Processing row', (completed + 1), 'of', total);
 
+            // Process this row and wait for completion
+            replaceSingleRow(row, function(success) {
                 completed++;
                 updateProgressModal(completed, total);
 
-                if (completed === total) {
-                    setTimeout(function () {
-                        hideProgressModal();
-                        refreshDebugLog();
-                    }, 2000);
-                }
-            }, index * 500); // Stagger requests by 500ms
-        });
+                // Process next row immediately after this one completes
+                processNext();
+            });
+        }
+
+        // Start processing the first row
+        processNext();
     }
 
     function updateReplaceAllButton() {
