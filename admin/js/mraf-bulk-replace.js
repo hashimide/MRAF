@@ -789,109 +789,50 @@
         if (!append) {
             resultsContainer.empty();
         } else {
-            $('#mraf-load-more-btn').remove();
+            $('#mraf-load-more-btn').parent().remove();
         }
 
-        let grid = resultsContainer.find('.mraf-search-grid');
-        if (!grid.length) {
-            grid = $('<div class="mraf-search-grid"></div>');
-            resultsContainer.append(grid);
-        }
-
-        images.forEach(function (image) {
-            const thumbUrl = image.thumb + (image.thumb.indexOf('?') > -1 ? '&' : '?') + 't=' + Date.now();
-            const isReplaced = !!image.replaced_at;
-            const isInList = $('.mraf-replace-row[data-attachment-id="' + image.id + '"]').length > 0;
-
-            // Determine button state and text
-            let buttonText = 'Add to List';
-            let buttonDisabled = false;
-
-            if (isReplaced && isInList) {
-                buttonText = 'In List';
-                buttonDisabled = true;
-            } else if (isReplaced) {
-                buttonText = 'Replace Again';
-                buttonDisabled = false;
-            } else if (isInList) {
-                buttonText = 'In List';
-                buttonDisabled = true;
-            }
-
-            const item = $(`
-                <div class="mraf-search-item ${isReplaced ? 'mraf-item-replaced' : ''} ${isInList ? 'mraf-item-in-list' : ''}" data-id="${image.id}">
-                    <div class="mraf-search-thumb">
-                        <img src="${thumbUrl}" alt="${escapeHtml(image.title)}" loading="lazy">
-                        ${isReplaced ? '<span class="mraf-badge mraf-badge-replaced">✓ Replaced</span>' : ''}
-                        ${isInList ? '<span class="mraf-badge mraf-badge-in-list">In List</span>' : ''}
-                    </div>
-                    <div class="mraf-search-info">
-                            <strong style="display:block; white-space: normal;" title="${escapeHtml(image.filename)}">${escapeHtml(image.filename)}</strong>
-                            <span style="font-style: italic; color: #666; display:block;">Title: ${escapeHtml(image.title || '(none)')}</span>
-                            <span style="font-style: italic; color: #666; display:block;">Alt: ${escapeHtml(image.alt_text || '(none)')}</span>
-                            <span>${image.dimensions} x ${image.mime_type.split('/') [1].toUpperCase()}</span>
-                        </div>
-                    <button type="button" class="mraf-btn mraf-btn-primary mraf-add-to-list" ${buttonDisabled ? 'disabled' : ''}>
-                        ${buttonText}
-                    </button>
-                </div>
-            `);
-
-            // Store image data on the element
-            item.data('image-data', image);
-
-            item.find('.mraf-add-to-list').on('click', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-
-                const button = $(this);
+        // Use shared gallery rendering
+        MRAF.Gallery.renderSearchGrid(images, resultsContainer, {
+            badgeType: 'replaced',
+            buttonClass: 'mraf-add-to-list',
+            buttonText: {
+                add: 'Add to List',
+                added: 'In List',
+                processed: 'Replace Again'
+            },
+            checkIfInList: function(imageId) {
+                return $('.mraf-replace-row[data-attachment-id="' + imageId + '"]').length > 0;
+            },
+            checkIfProcessed: function(image) {
+                return !!image.replaced_at;
+            },
+            onButtonClick: function(image, $item, $btn) {
                 debugLog('Adding image to list:', image.id);
-                button.text('Added').prop('disabled', true);
+
+                // Add the row
                 const newRow = addReplaceRow(image);
                 debugLog('Row added, image will remain on search tab');
 
-                showToast('Image added to Manual Selection tab!', 'success');
+                // Update item state using shared function
+                MRAF.Gallery.updateItemState($item, $btn, {
+                    buttonText: 'In List',
+                    removeClass: 'mraf-item-replaced',
+                    removeBadge: '.mraf-badge-replaced'
+                });
 
-                // Update the item state
-                item.addClass('mraf-item-in-list');
-                item.removeClass('mraf-item-replaced');
+                MRAF.Utils.showToast('Image added to Manual Selection tab!', 'success');
 
-                // Remove "Replaced" badge and add "In List" badge only
-                item.find('.mraf-badge-replaced').remove();
-
-                // Update badge - show "In List" badge if not already there
-                if (!item.find('.mraf-badge-in-list').length) {
-                    item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
-                }
-
-                // Update button state
-                button.text('In List').prop('disabled', true);
-
+                // Highlight the manual tab badge
                 const manualTabBadge = $('.mraf-tab-btn[data-tab="manual"] .mraf-tab-badge');
-                if (manualTabBadge.length) {
-                    manualTabBadge.css({'background': '#00a32a', 'transform': 'scale(1.3)', 'transition': 'all 0.3s ease'});
-                    setTimeout(function() {
-                        manualTabBadge.css({'background': '', 'transform': '', 'transition': 'all 0.3s ease'});
-                    }, 1000);
-                }
-            });
-
-            grid.append(item);
+                MRAF.Gallery.highlightTabBadge(manualTabBadge);
+            }
         });
 
-        if (data && data.has_more) {
-            const loadMoreBtn = $(`
-                <div style="text-align: center; padding: 20px;">
-                    <button type="button" class="mraf-btn mraf-btn-primary" id="mraf-load-more-btn" style="padding: 0 24px;">
-                        Load More (${data.total - (data.page * data.per_page)} remaining)
-                    </button>
-                </div>
-            `);
-            loadMoreBtn.find('#mraf-load-more-btn').on('click', function() {
-                performSearch(data.page + 1, true);
-            });
-            resultsContainer.append(loadMoreBtn);
-        }
+        // Use shared load more rendering
+        MRAF.Gallery.renderLoadMore(data, resultsContainer, function(page) {
+            performSearch(page, true);
+        });
     }
 
     // Progress Section (inline like convert & replace)
@@ -944,15 +885,12 @@
             debugLog('Adding image to list (bulk):', imageId);
             const newRow = addReplaceRow(image);
 
-            // Update button and item state
-            $btn.text('In List').prop('disabled', true);
-            $item.addClass('mraf-item-in-list');
-            $item.removeClass('mraf-item-replaced');
-
-            // Update badge - show "In List" badge if not already there
-            if (!$item.find('.mraf-badge-in-list').length) {
-                $item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
-            }
+            // Update button and item state using shared function
+            MRAF.Gallery.updateItemState($item, $btn, {
+                buttonText: 'In List',
+                removeClass: 'mraf-item-replaced',
+                removeBadge: '.mraf-badge-replaced'
+            });
 
             addedCount++;
         });
@@ -961,14 +899,9 @@
         if (addedCount > 0) {
             updateManualTabCount();
 
-            // Highlight the manual tab badge
+            // Highlight the manual tab badge using shared function
             const manualTabBadge = $('.mraf-tab-btn[data-tab="manual"] .mraf-tab-badge');
-            if (manualTabBadge.length) {
-                manualTabBadge.css({'background': '#00a32a', 'transform': 'scale(1.3)', 'transition': 'all 0.3s ease'});
-                setTimeout(function() {
-                    manualTabBadge.css({'background': '', 'transform': '', 'transition': 'all 0.3s ease'});
-                }, 1000);
-            }
+            MRAF.Gallery.highlightTabBadge(manualTabBadge);
 
             // Show single notification
             showToast('Added ' + addedCount + ' image(s) to Manual Selection tab!', 'success');
@@ -977,99 +910,14 @@
         }
     }
 
-    // Utilities
+    // Utilities - Use shared functions
     function escapeHtml(text) {
-        const map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return String(text).replace(/[&<>"']/g, function (m) {
-            return map[m];
-        });
+        return MRAF.Utils.escapeHtml(text);
     }
 
-    // Toast notification
-    function showToast(message, type = 'info') {
-        // Remove existing toasts
-        $('.mraf-toast').remove();
-
-        const colors = {
-            success: '#00a32a',
-            error: '#dc3232',
-            info: '#2271b1',
-            warning: '#f0b849'
-        };
-
-        const icons = {
-            success: '✓',
-            error: '✕',
-            info: 'ℹ',
-            warning: '⚠'
-        };
-
-        const toast = $(`
-            <div class="mraf-toast" style="
-                position: fixed;
-                bottom: 30px;
-                right: 30px;
-                background: ${colors[type] || colors.info};
-                color: white;
-                padding: 16px 24px;
-                border-radius: 8px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                z-index: 100001;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                font-size: 14px;
-                font-weight: 500;
-                animation: mraf-slide-in 0.3s ease;
-            ">
-                <span style="font-size: 18px; font-weight: bold;">${icons[type] || icons.info}</span>
-                <span>${escapeHtml(message)}</span>
-            </div>
-        `);
-
-        // Add CSS animation
-        if (!$('#mraf-toast-styles').length) {
-            $('head').append(`
-                <style id="mraf-toast-styles">
-                    @keyframes mraf-slide-in {
-                        from {
-                            transform: translateX(400px);
-                            opacity: 0;
-                        }
-                        to {
-                            transform: translateX(0);
-                            opacity: 1;
-                        }
-                    }
-                    @keyframes mraf-slide-out {
-                        from {
-                            transform: translateX(0);
-                            opacity: 1;
-                        }
-                        to {
-                            transform: translateX(400px);
-                            opacity: 0;
-                        }
-                    }
-                </style>
-            `);
-        }
-
-        $('body').append(toast);
-
-        // Auto-remove after 3 seconds
-        setTimeout(function() {
-            toast.css('animation', 'mraf-slide-out 0.3s ease');
-            setTimeout(function() {
-                toast.remove();
-            }, 300);
-        }, 3000);
+    // Toast notification - Use shared function
+    function showToast(message, type) {
+        MRAF.Utils.showToast(message, type);
     }
 
 })(jQuery);

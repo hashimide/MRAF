@@ -1081,20 +1081,50 @@ class MRAF_Image_Converter
         }
 
         wp_enqueue_media();
+        $shared_js_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/js/mraf-shared.js') ?: MRAF_VERSION;
         $converter_js_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/js/mraf-converter.js') ?: MRAF_VERSION;
+        $shared_css_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-shared.css') ?: MRAF_VERSION;
+        $gallery_css_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-gallery.css') ?: MRAF_VERSION;
         $converter_css_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-converter.css') ?: MRAF_VERSION;
+
+        // Enqueue shared utilities first
+        wp_enqueue_script(
+            'mraf-shared',
+            MRAF_PLUGIN_URL . 'admin/js/mraf-shared.js',
+            ['jquery'],
+            $shared_js_version,
+            true
+        );
 
         wp_enqueue_script(
             'mraf-converter',
             MRAF_PLUGIN_URL . 'admin/js/mraf-converter.js',
-            ['jquery', 'jquery-ui-slider'],
+            ['jquery', 'jquery-ui-slider', 'mraf-shared'],
             $converter_js_version,
             true
         );
+
+        // Enqueue shared styles (CSS variables, buttons, tabs, filters, etc.)
+        wp_enqueue_style(
+            'mraf-shared',
+            MRAF_PLUGIN_URL . 'admin/css/mraf-shared.css',
+            [],
+            $shared_css_version
+        );
+
+        // Enqueue shared gallery styles
+        wp_enqueue_style(
+            'mraf-gallery',
+            MRAF_PLUGIN_URL . 'admin/css/mraf-gallery.css',
+            ['mraf-shared'],
+            $gallery_css_version
+        );
+
+        // Enqueue converter-specific styles
         wp_enqueue_style(
             'mraf-converter',
             MRAF_PLUGIN_URL . 'admin/css/mraf-converter.css',
-            [],
+            ['mraf-shared', 'mraf-gallery'],
             $converter_css_version
         );
 
@@ -1767,15 +1797,9 @@ class MRAF_Image_Converter
         // Filter for unconverted images only
         if ($unconverted_only) {
             $args['meta_query'] = [
-                'relation' => 'OR',
                 [
                     'key' => '_mraf_converted',
                     'compare' => 'NOT EXISTS'
-                ],
-                [
-                    'key' => '_mraf_converted',
-                    'value' => '1',
-                    'compare' => '!='
                 ]
             ];
         }

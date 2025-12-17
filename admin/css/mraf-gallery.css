@@ -1,0 +1,151 @@
+/* MRAF Shared Gallery Styles */
+/* Used by both Converter and Bulk Replacer search galleries */
+
+.mraf-search-results {
+    margin-top: 20px;
+}
+
+.mraf-search-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+}
+
+.mraf-search-item {
+    background: var(--mraf-card);
+    border: 1px solid var(--mraf-border);
+    border-radius: var(--mraf-radius);
+    overflow: hidden;
+    transition: all 200ms ease;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    position: relative;
+}
+
+.mraf-search-item:hover {
+    border-color: var(--mraf-primary);
+    box-shadow: 0 8px 16px -4px rgb(0 0 0 / 0.1), 0 4px 8px -4px rgb(0 0 0 / 0.1);
+    transform: translateY(-2px);
+}
+
+.mraf-search-thumb {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: var(--mraf-muted);
+    overflow: hidden;
+    position: relative;
+}
+
+.mraf-search-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.mraf-search-info {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.mraf-search-info strong {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--mraf-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mraf-search-info span {
+    font-size: 11px;
+    color: var(--mraf-muted-fg);
+}
+
+.mraf-search-info .mraf-filepath {
+    font-size: 10px;
+    color: var(--mraf-muted-fg);
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.mraf-search-item .mraf-btn {
+    margin: 0 12px 12px;
+    width: calc(100% - 24px);
+}
+
+/* Badge Styles */
+.mraf-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+}
+
+/* Green badges for processed items */
+.mraf-badge-replaced,
+.mraf-badge-converted {
+    background: var(--mraf-success);
+    color: white;
+}
+
+/* Blue badge for items in list (added but not processed) */
+.mraf-badge-in-list {
+    background: var(--mraf-primary);
+    color: white;
+}
+
+/* Item States */
+.mraf-item-replaced,
+.mraf-item-converted {
+    opacity: 0.85;
+    border-color: var(--mraf-success);
+}
+
+.mraf-item-in-list {
+    border-color: var(--mraf-primary);
+    background: var(--mraf-card);
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 0 0 1px hsl(221.2 83.2% 53.3% / 0.1);
+}
+
+/* Button styles for added/processed items */
+.mraf-item-in-list .mraf-btn {
+    background: hsl(221.2 83.2% 53.3% / 0.15);
+    color: var(--mraf-primary);
+    border: 1px solid var(--mraf-primary);
+}
+
+.mraf-item-in-list .mraf-btn:hover {
+    background: var(--mraf-primary);
+    color: white;
+}
+
+.mraf-item-replaced .mraf-btn,
+.mraf-item-converted .mraf-btn {
+    background: hsl(142.1 76.2% 36.3% / 0.15);
+    color: var(--mraf-success);
+    border: 1px solid var(--mraf-success);
+}
+
+.mraf-item-replaced .mraf-btn:hover,
+.mraf-item-converted .mraf-btn:hover {
+    background: var(--mraf-success);
+    color: white;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .mraf-search-grid {
+        grid-template-columns: 1fr;
+    }
+}

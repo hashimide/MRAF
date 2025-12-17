@@ -36,11 +36,25 @@ class MRAF_Bulk_Replace
 
         wp_enqueue_media();
 
+        $shared_js_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/js/mraf-shared.js') ?: MRAF_VERSION;
         $bulk_js_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/js/mraf-bulk-replace.js') ?: MRAF_VERSION;
+        $shared_css_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-shared.css') ?: MRAF_VERSION;
+        $gallery_css_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-gallery.css') ?: MRAF_VERSION;
         $bulk_css_version = @filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-bulk-replace.css') ?: MRAF_VERSION;
 
-        wp_enqueue_script('mraf-bulk-replace', MRAF_PLUGIN_URL . 'admin/js/mraf-bulk-replace.js', ['jquery', 'jquery-ui-sortable'], $bulk_js_version, true);
-        wp_enqueue_style('mraf-bulk-replace', MRAF_PLUGIN_URL . 'admin/css/mraf-bulk-replace.css', [], $bulk_css_version);
+        // Enqueue shared utilities first
+        wp_enqueue_script('mraf-shared', MRAF_PLUGIN_URL . 'admin/js/mraf-shared.js', ['jquery'], $shared_js_version, true);
+
+        wp_enqueue_script('mraf-bulk-replace', MRAF_PLUGIN_URL . 'admin/js/mraf-bulk-replace.js', ['jquery', 'jquery-ui-sortable', 'mraf-shared'], $bulk_js_version, true);
+
+        // Enqueue shared styles (CSS variables, buttons, tabs, filters, etc.)
+        wp_enqueue_style('mraf-shared', MRAF_PLUGIN_URL . 'admin/css/mraf-shared.css', [], $shared_css_version);
+
+        // Enqueue shared gallery styles
+        wp_enqueue_style('mraf-gallery', MRAF_PLUGIN_URL . 'admin/css/mraf-gallery.css', ['mraf-shared'], $gallery_css_version);
+
+        // Enqueue bulk replacer-specific styles
+        wp_enqueue_style('mraf-bulk-replace', MRAF_PLUGIN_URL . 'admin/css/mraf-bulk-replace.css', ['mraf-shared', 'mraf-gallery'], $bulk_css_version);
 
         wp_localize_script('mraf-bulk-replace', 'mrafBulkData', [
             'ajaxUrl' => admin_url('admin-ajax.php'),

@@ -272,12 +272,7 @@
         },
 
         generateDefaultTitle: function(filename) {
-            return filename
-                .replace(/\.[^/.]+$/, '') // Remove extension
-                .replace(/[^a-z0-9]/gi, '-') // Replace non-alphanumeric with hyphen
-                .replace(/-+/g, '-') // Replace multiple hyphens
-                .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
-                .toLowerCase();
+            return MRAF.Utils.generateDefaultTitle(filename);
         },
 
         renderGridItem: function(fileData) {
@@ -584,16 +579,7 @@
         },
 
         showNotice: function(message, type) {
-            const noticeClass = 'notice notice-' + type;
-            const notice = $('<div class="' + noticeClass + ' is-dismissible"><p>' + message + '</p></div>');
-
-            this.$notices.append(notice);
-
-            setTimeout(function() {
-                notice.fadeOut(300, function() {
-                    $(this).remove();
-                });
-            }, 5000);
+            MRAF.Utils.showToast(message, type);
         },
 
         initTabs: function() {
@@ -668,69 +654,41 @@
             if (!append) {
                 this.$searchResults.empty();
             } else {
-                $('#mraf-load-more-btn').remove();
+                $('#mraf-load-more-btn').parent().remove();
             }
 
-            let grid = this.$searchResults.find('.mraf-search-grid');
-            if (!grid.length) {
-                grid = $('<div class="mraf-search-grid"></div>');
-                this.$searchResults.append(grid);
-            }
+            // Use shared gallery rendering
+            MRAF.Gallery.renderSearchGrid(images, this.$searchResults, {
+                badgeType: 'converted',
+                buttonClass: 'mraf-add-to-convert',
+                buttonText: {
+                    add: 'Add to Convert',
+                    added: 'In List',
+                    processed: 'Convert Again'
+                },
+                checkIfInList: function(imageId) {
+                    return self.selectedFiles.some(f => f.attachment_id === imageId);
+                },
+                checkIfProcessed: function(image) {
+                    return !!image.converted;
+                },
+                onButtonClick: function(image, $item, $btn) {
+                    const wasProcessed = !!image.converted;
 
-            images.forEach(function(image) {
-                if (image.mime_type === 'image/svg+xml') {
-                    return; // skip svg to avoid resize/convert errors
-                }
-                const thumbUrl = image.thumb + (image.thumb.indexOf('?') > -1 ? '&' : '?') + 't=' + Date.now();
-                const isInList = self.selectedFiles.some(f => f.attachment_id === image.id);
-                const isReplaced = !!image.converted;
-
-                const item = $(`
-                    <div class="mraf-search-item ${isInList ? 'mraf-item-in-list' : ''} ${isReplaced ? 'mraf-item-replaced' : ''}" data-id="${image.id}">
-                        <div class="mraf-search-thumb">
-                            <img src="${thumbUrl}" alt="${self.escapeHtml(image.title)}" loading="lazy">
-                            ${isReplaced ? '<span class="mraf-badge mraf-badge-replaced">Replaced</span>' : ''}
-                            ${isInList && !isReplaced ? '<span class="mraf-badge mraf-badge-in-list">In List</span>' : ''}
-                        </div>
-                        <div class="mraf-search-info">
-                            <strong style="display:block; white-space: normal;" title="${self.escapeHtml(image.filename)}">${self.escapeHtml(image.filename)}</strong>
-                            <span style="font-style: italic; color: #666; display:block;">Title: ${self.escapeHtml(image.title || '(none)')}</span>
-                            <span style="font-style: italic; color: #666; display:block;">Alt: ${self.escapeHtml(image.alt_text || '(none)')}</span>
-                            <span>${image.dimensions} x ${image.mime_type.split('/') [1].toUpperCase()}</span>
-                        </div>
-                        <button type="button" class="mraf-btn mraf-btn-primary mraf-add-to-convert" ${isInList && !isReplaced ? 'disabled' : ''}>
-                            ${isReplaced ? 'Replace Again' : isInList ? 'In List' : 'Add to Convert'}
-                        </button>
-                    </div>
-                `);
-
-                // Store image data on the element
-                item.data('image-data', image);
-
-                item.find('.mraf-add-to-convert').on('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    const button = $(this);
-                    let wasReplaced = isReplaced;
-
-                    if (isInList && !wasReplaced) {
-                        return;
+                    // Remove processed badge if applicable
+                    if (wasProcessed) {
+                        $item.removeClass('mraf-item-converted');
+                        $item.find('.mraf-badge-converted').remove();
                     }
 
-                    if (wasReplaced) {
-                        item.removeClass('mraf-item-replaced');
-                        item.find('.mraf-badge-replaced').remove();
-                    }
-
-                    // Create file data object from search result
+                    // Create file data object
                     const fileId = 'file-' + image.id + '-' + Date.now();
                     const fileData = {
                         id: fileId,
                         attachment_id: image.id,
                         file_path: image.url,
                         filename: image.filename,
-                        title: self.generateDefaultTitle(image.filename),
+                        title: MRAF.Utils.generateDefaultTitle(image.filename),
                         width: image.width,
                         height: image.height,
                         filesize: image.filesize,
@@ -749,41 +707,24 @@
                     self.updateUI();
                     self.updateManualTabCount();
 
-                    button.text(wasReplaced ? 'Replace Again' : '✓ Added').prop('disabled', true);
-                    item.addClass('mraf-item-in-list');
-                    if (!wasReplaced) {
-                        item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
-                    } else {
-                        item.find('.mraf-search-thumb .mraf-badge-in-list').remove();
-                        item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
-                    }
+                    // Update item state using shared function
+                    MRAF.Gallery.updateItemState($item, $btn, {
+                        buttonText: '✓ Added',
+                        removeClass: 'mraf-item-converted',
+                        removeBadge: '.mraf-badge-converted'
+                    });
 
-                    self.showNotice('Image added to conversion list!', 'success');
+                    MRAF.Utils.showToast('Image added to conversion list!', 'success');
 
                     // Highlight the manual tab badge
-                    const $badge = $('#mraf-manual-count');
-                    $badge.css({'background': '#00a32a', 'transform': 'scale(1.3)', 'transition': 'all 0.3s ease'});
-                    setTimeout(function() {
-                        $badge.css({'background': '', 'transform': '', 'transition': 'all 0.3s ease'});
-                    }, 1000);
-                });
-
-                grid.append(item);
+                    MRAF.Gallery.highlightTabBadge($('#mraf-manual-count'));
+                }
             });
 
-            if (data && data.has_more) {
-                const loadMoreBtn = $(`
-                    <div style="text-align: center; padding: 20px;">
-                        <button type="button" class="mraf-btn mraf-btn-primary" id="mraf-load-more-btn" style="padding: 0 24px;">
-                            Load More (${data.total - (data.page * data.per_page)} remaining)
-                        </button>
-                    </div>
-                `);
-                loadMoreBtn.find('#mraf-load-more-btn').on('click', function() {
-                    self.performSearch(data.page + 1, true);
-                });
-                this.$searchResults.append(loadMoreBtn);
-            }
+            // Use shared load more rendering
+            MRAF.Gallery.renderLoadMore(data, this.$searchResults, function(page) {
+                self.performSearch(page, true);
+            });
         },
 
         selectAllVisibleImages: function() {
@@ -835,15 +776,12 @@
                     self.renderListItem(fileData);
                 }
 
-                // Update button and item state
-                $btn.text(wasReplaced ? 'Replace Again' : '✓ Added').prop('disabled', true);
-                $item.addClass('mraf-item-in-list');
-                if (!wasReplaced) {
-                    $item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
-                } else {
-                    $item.find('.mraf-search-thumb .mraf-badge-in-list').remove();
-                    $item.find('.mraf-search-thumb').append('<span class="mraf-badge mraf-badge-in-list">In List</span>');
-                }
+                // Update button and item state using shared function
+                MRAF.Gallery.updateItemState($item, $btn, {
+                    buttonText: '✓ Added',
+                    removeClass: 'mraf-item-converted',
+                    removeBadge: '.mraf-badge-converted'
+                });
 
                 addedCount++;
             });
@@ -853,12 +791,8 @@
                 self.updateUI();
                 self.updateManualTabCount();
 
-                // Highlight the manual tab badge
-                const $badge = $('#mraf-manual-count');
-                $badge.css({'background': '#00a32a', 'transform': 'scale(1.3)', 'transition': 'all 0.3s ease'});
-                setTimeout(function() {
-                    $badge.css({'background': '', 'transform': '', 'transition': 'all 0.3s ease'});
-                }, 1000);
+                // Highlight the manual tab badge using shared function
+                MRAF.Gallery.highlightTabBadge($('#mraf-manual-count'));
 
                 // Show single notification
                 this.showNotice(`Added ${addedCount} image(s) to conversion list!`, 'success');
@@ -868,14 +802,7 @@
         },
 
         escapeHtml: function(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
-            return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+            return MRAF.Utils.escapeHtml(text);
         }
     };
 
