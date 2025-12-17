@@ -361,52 +361,32 @@
     margin: 0 0 16px 0;
 }
 
-.mraf-drop-zone {
-    display: flex;
-    flex-direction: column;
+/* Select Images Button */
+.mraf-select-images-btn {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    gap: 12px;
-    padding: 48px 24px;
-    background: linear-gradient(135deg, var(--mraf-muted) 0%, hsl(210 40% 98%) 100%);
-    border: 2px dashed hsl(214.3 31.8% 88%);
-    border-radius: var(--mraf-radius);
-    text-align: center;
-    transition: all 250ms ease;
-    cursor: pointer;
-    min-height: 200px;
+    gap: 10px;
+    padding: 14px 28px !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    min-height: 48px;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
-.mraf-drop-zone:hover {
-    border-color: var(--mraf-primary);
-    background: linear-gradient(135deg, hsl(221.2 83.2% 53.3% / 0.05) 0%, hsl(221.2 83.2% 53.3% / 0.02) 100%);
-    border-style: solid;
-    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.08);
+.mraf-select-images-btn:hover {
     transform: translateY(-2px);
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1) !important;
 }
 
-.mraf-drop-zone-content .dashicons {
-    font-size: 48px;
-    width: 48px;
-    height: 48px;
-    color: var(--mraf-muted-fg);
-    opacity: 0.4;
+.mraf-select-images-btn:active {
+    transform: translateY(0);
 }
 
-.mraf-drop-zone:hover .dashicons {
-    color: var(--mraf-primary);
-    opacity: 0.7;
-}
-
-.mraf-drop-zone-content p {
-    margin: 0;
-    font-size: 15px;
-    color: var(--mraf-muted-fg);
-    font-weight: 500;
-}
-
-.mraf-drop-zone-content .button {
-    margin-top: 8px;
+.mraf-select-images-btn .dashicons {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
 }
 
 /* Images Section */

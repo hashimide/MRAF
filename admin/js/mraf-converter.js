@@ -60,10 +60,6 @@
                 self.openMediaLibrary();
             });
 
-            this.$dropZone.on('click', function() {
-                self.openMediaLibrary();
-            });
-
             // Quality slider
             this.$qualityInput.on('input change', function() {
                 self.setQuality($(this).val());

@@ -1174,18 +1174,14 @@ class MRAF_Image_Converter
                 <!-- Upload Area -->
                 <div class="mraf-upload-area">
                     <h2><?php echo esc_html__('Select Images', 'mraf'); ?></h2>
-
-                    <div class="mraf-drop-zone" id="mraf-drop-zone">
-                        <div class="mraf-drop-zone-content">
-                            <span class="dashicons dashicons-upload"></span>
-                            <p><?php echo esc_html__('Click to select images from Media Library', 'mraf'); ?></p>
-                            <button type="button" class="button button-primary" id="mraf-select-files">
-                                <?php echo esc_html__('Select Images', 'mraf'); ?>
-                            </button>
-                        </div>
-                    </div>
-
-                    <p class="description">
+                    <p class="description" style="margin-bottom: 16px;">
+                        <?php echo esc_html__('Choose images from your Media Library to convert to WebP format.', 'mraf'); ?>
+                    </p>
+                    <button type="button" class="mraf-btn mraf-btn-primary mraf-select-images-btn" id="mraf-select-files">
+                        <span class="dashicons dashicons-images-alt2"></span>
+                        <?php echo esc_html__('Select Images from Media Library', 'mraf'); ?>
+                    </button>
+                    <p class="description" style="margin-top: 12px; font-size: 12px; color: var(--mraf-muted-fg);">
                         <?php echo esc_html__('Supported formats: JPG, PNG, GIF, WebP', 'mraf'); ?>
                     </p>
                 </div>
