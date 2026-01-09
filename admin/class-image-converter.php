@@ -19,6 +19,7 @@ class MRAF_Image_Converter
         add_action('wp_ajax_mraf_convert_single_image', [$this, 'ajax_convert_single_image']);
         add_action('wp_ajax_mraf_get_converter_debug', [$this, 'ajax_get_debug_log']);
         add_action('wp_ajax_mraf_search_converter_images', [$this, 'ajax_search_images']);
+        add_action('wp_ajax_mraf_save_debug_setting', [$this, 'ajax_save_debug_setting']);
 
         // Detect available image library
         $this->detect_image_library();
@@ -1184,9 +1185,11 @@ class MRAF_Image_Converter
                     <?php echo esc_html__('Search & Filter', 'mraf'); ?>
                     <span class="mraf-tab-badge" id="mraf-search-count" style="display:none;">0</span>
                 </button>
+                <?php if (get_option('mraf_show_debug_tab', false)): ?>
                 <button class="mraf-tab-btn" data-tab="debug">
                     <?php echo esc_html__('Debug Log', 'mraf'); ?>
                 </button>
+                <?php endif; ?>
                 <button class="mraf-tab-btn" data-tab="settings">
                     <span class="dashicons dashicons-admin-generic"></span>
                     <?php echo esc_html__('Settings', 'mraf'); ?>
@@ -1311,6 +1314,7 @@ class MRAF_Image_Converter
                 </div>
             </div>
 
+            <?php if (get_option('mraf_show_debug_tab', false)): ?>
             <!-- Tab Content: Debug Log -->
             <div class="mraf-tab-content" data-tab="debug">
                 <div class="mraf-debug-box">
@@ -1342,6 +1346,7 @@ class MRAF_Image_Converter
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
 
             <!-- Tab Content: Settings -->
             <div class="mraf-tab-content" data-tab="settings">
@@ -1414,6 +1419,24 @@ class MRAF_Image_Converter
                                 <p class="description">
                                     <?php echo esc_html__('Images will be replaced in-place. The WebP version will replace the original attachment (same ID), so it appears everywhere the image is used.', 'mraf'); ?>
                                 </p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="mraf-show-debug-tab"><?php echo esc_html__('Developer Options', 'mraf'); ?></label>
+                            </th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" id="mraf-show-debug-tab" <?php checked(get_option('mraf_show_debug_tab', false)); ?> />
+                                    <?php echo esc_html__('Show Debug Log tab', 'mraf'); ?>
+                                </label>
+                                <p class="description">
+                                    <?php echo esc_html__('Enable this to see detailed debug logs for troubleshooting conversion issues. Refresh the page after changing this setting.', 'mraf'); ?>
+                                </p>
+                                <button type="button" class="button" id="mraf-save-debug-setting">
+                                    <?php echo esc_html__('Save Debug Setting', 'mraf'); ?>
+                                </button>
                             </td>
                         </tr>
                     </table>
@@ -2103,5 +2126,25 @@ class MRAF_Image_Converter
             case 'year': return ['after' => '1 year ago'];
             default: return [];
         }
+    }
+
+    /**
+     * AJAX: Save debug setting
+     */
+    public function ajax_save_debug_setting()
+    {
+        check_ajax_referer(self::NONCE_ACTION, 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Permission denied.', 'mraf')]);
+        }
+
+        $show_debug = isset($_POST['show_debug']) && $_POST['show_debug'] === 'true';
+        update_option('mraf_show_debug_tab', $show_debug);
+
+        wp_send_json_success([
+            'message' => __('Debug setting saved. Please refresh the page to see changes.', 'mraf'),
+            'show_debug' => $show_debug
+        ]);
     }
 }

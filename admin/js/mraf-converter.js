@@ -93,6 +93,40 @@
                 $icon.toggleClass('dashicons-arrow-right dashicons-arrow-down');
             });
 
+            // Save debug setting
+            $('#mraf-save-debug-setting').on('click', function() {
+                const showDebug = $('#mraf-show-debug-tab').is(':checked');
+                const $btn = $(this);
+                const originalText = $btn.text();
+
+                $btn.prop('disabled', true).text('Saving...');
+
+                $.ajax({
+                    url: mrafConverterData.ajaxUrl,
+                    type: 'POST',
+                    data: {
+                        action: 'mraf_save_debug_setting',
+                        nonce: mrafConverterData.nonce,
+                        show_debug: showDebug ? 'true' : 'false'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            self.showNotice(response.data.message, 'success');
+                            setTimeout(function() {
+                                location.reload();
+                            }, 1500);
+                        } else {
+                            self.showNotice(response.data.message, 'error');
+                            $btn.prop('disabled', false).text(originalText);
+                        }
+                    },
+                    error: function() {
+                        self.showNotice('Failed to save setting. Please try again.', 'error');
+                        $btn.prop('disabled', false).text(originalText);
+                    }
+                });
+            });
+
             // View toggle
             this.$viewGridBtn.on('click', function() {
                 self.switchView('grid');

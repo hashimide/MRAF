@@ -76,7 +76,9 @@ class MRAF_Bulk_Replace
             <div class="mraf-bulk-tabs">
                 <button class="mraf-tab-btn active" data-tab="manual"><?php esc_html_e('Manual Selection', 'mraf'); ?></button>
                 <button class="mraf-tab-btn" data-tab="search"><?php esc_html_e('Search & Filter', 'mraf'); ?></button>
+                <?php if (get_option('mraf_show_debug_tab', false)): ?>
                 <button class="mraf-tab-btn" data-tab="debug"><?php esc_html_e('Debug Log', 'mraf'); ?></button>
+                <?php endif; ?>
             </div>
             <div class="mraf-tab-content active" data-tab="manual">
                 <div class="mraf-actions">
@@ -155,6 +157,7 @@ class MRAF_Bulk_Replace
                     <div id="mraf-search-results" class="mraf-search-results"></div>
                 </div>
             </div>
+            <?php if (get_option('mraf_show_debug_tab', false)): ?>
             <div class="mraf-tab-content" data-tab="debug">
                 <div class="mraf-debug-box">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
@@ -185,6 +188,7 @@ class MRAF_Bulk_Replace
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
         </div>
         <?php
     }
