@@ -17,8 +17,6 @@
         },
 
         cacheElements: function() {
-            this.$dropZone = $('#mraf-drop-zone');
-            this.$fileInput = $('#mraf-file-input');
             this.$selectFilesBtn = $('#mraf-select-files');
             this.$imagesList = $('#mraf-images-list');
             this.$imagesSection = $('#mraf-images-section');
