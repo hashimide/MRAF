@@ -30,9 +30,19 @@ class MRAF_Image_Converter
      */
     private function detect_image_library()
     {
-        if (extension_loaded('imagick') && class_exists('Imagick')) {
+        $imagick_available = extension_loaded('imagick') && class_exists('Imagick');
+        $gd_available = extension_loaded('gd') && function_exists('gd_info');
+
+        $imagick_webp = $imagick_available ? $this->is_imagick_webp_supported() : false;
+        $gd_webp = $gd_available ? $this->is_gd_webp_supported() : false;
+
+        if ($imagick_available && $imagick_webp) {
             $this->image_library = 'imagick';
-        } elseif (extension_loaded('gd') && function_exists('gd_info')) {
+        } elseif ($gd_available && $gd_webp) {
+            $this->image_library = 'gd';
+        } elseif ($imagick_available) {
+            $this->image_library = 'imagick';
+        } elseif ($gd_available) {
             $this->image_library = 'gd';
         } else {
             $this->image_library = null;
@@ -55,11 +65,38 @@ class MRAF_Image_Converter
     public function is_webp_supported()
     {
         if ($this->image_library === 'imagick') {
-            return true;
+            return $this->is_imagick_webp_supported();
         } elseif ($this->image_library === 'gd') {
-            return function_exists('imagewebp');
+            return $this->is_gd_webp_supported();
         }
         return false;
+    }
+
+    /**
+     * Check if Imagick supports WebP format
+     */
+    private function is_imagick_webp_supported()
+    {
+        try {
+            $imagick = new Imagick();
+            return in_array('WEBP', $imagick->queryFormats('WEBP'), true);
+        } catch (Exception $e) {
+            $this->log_debug('Imagick WebP check failed', ['error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    /**
+     * Check if GD supports WebP format
+     */
+    private function is_gd_webp_supported()
+    {
+        if (!function_exists('imagewebp')) {
+            return false;
+        }
+
+        $gd_info = gd_info();
+        return !empty($gd_info['WebP Support']);
     }
 
     /**
@@ -468,6 +505,9 @@ class MRAF_Image_Converter
      */
     public function convert_to_webp($source_path, $quality = 85, $output_path = null)
     {
+        $this->log_debug('=== Starting WebP Conversion ===');
+        $this->log_debug('Source file: ' . basename($source_path));
+
         $result = [
             'success' => false,
             'message' => '',
@@ -481,24 +521,46 @@ class MRAF_Image_Converter
 
         // Check WebP support
         if (!$this->is_webp_supported()) {
+            $this->log_debug('ERROR: WebP not supported', [
+                'library' => $this->image_library
+            ]);
             $result['message'] = __('WebP conversion is not supported on this server.', 'mraf');
             return $result;
         }
 
+        $this->log_debug('WebP support confirmed', ['library' => $this->image_library]);
+
         // Validate source file
         $validation_errors = $this->validate_image_file($source_path);
         if (!empty($validation_errors)) {
+            $this->log_debug('ERROR: File validation failed', ['errors' => $validation_errors]);
             $result['message'] = implode(' ', $validation_errors);
             return $result;
         }
 
+        $this->log_debug('File validation passed');
+
         // Get original file info
         $result['file_size_before'] = filesize($source_path);
-        $image_info = getimagesize($source_path);
+        $image_info = @getimagesize($source_path);
+
+        if ($image_info === false) {
+            $this->log_debug('ERROR: Failed to get image info');
+            $result['message'] = __('Failed to read image information', 'mraf');
+            return $result;
+        }
+
         $result['original_format'] = image_type_to_mime_type($image_info[2]);
+
+        $this->log_debug('Image info retrieved', [
+            'format' => $result['original_format'],
+            'dimensions' => $image_info[0] . 'x' . $image_info[1],
+            'size' => size_format($result['file_size_before'])
+        ]);
 
         // Validate quality
         $quality = max(1, min(100, intval($quality)));
+        $this->log_debug('Quality setting: ' . $quality);
 
         // Set output path
         if ($output_path === null) {
@@ -506,12 +568,17 @@ class MRAF_Image_Converter
             $output_path = $path_info['dirname'] . '/' . $path_info['filename'] . '.webp';
         }
 
+        $this->log_debug('Output path: ' . basename($output_path));
+
         // Convert using available library
         if ($this->image_library === 'imagick') {
+            $this->log_debug('Using Imagick for conversion');
             $convert_result = $this->convert_to_webp_imagick($source_path, $quality, $output_path);
         } elseif ($this->image_library === 'gd') {
+            $this->log_debug('Using GD for conversion');
             $convert_result = $this->convert_to_webp_gd($source_path, $quality, $output_path, $image_info[2]);
         } else {
+            $this->log_debug('ERROR: No image library available');
             $result['message'] = __('No image processing library available.', 'mraf');
             return $result;
         }
@@ -554,12 +621,43 @@ class MRAF_Image_Converter
      */
     private function convert_to_webp_imagick($source_path, $quality, $output_path)
     {
+        $this->log_debug('Starting Imagick WebP conversion', [
+            'source' => basename($source_path),
+            'output' => basename($output_path),
+            'quality' => $quality
+        ]);
+
         try {
             $imagick = new Imagick($source_path);
+            $this->log_debug('Imagick object created successfully');
+
+            // Get original format for logging
+            $original_format = $imagick->getImageFormat();
+            $this->log_debug('Original format: ' . $original_format);
+
             $imagick->setImageFormat('webp');
+            $this->log_debug('Image format set to WebP');
+
             $imagick->setImageCompressionQuality($quality);
+            $this->log_debug('Compression quality set: ' . $quality);
+
             $imagick->stripImage(); // Remove metadata
+            $this->log_debug('Image metadata stripped');
+
             $imagick->writeImage($output_path);
+            $this->log_debug('Image written to disk');
+
+            // Verify output file
+            if (file_exists($output_path)) {
+                $file_size = filesize($output_path);
+                $this->log_debug('WebP conversion successful', [
+                    'output_file' => basename($output_path),
+                    'size' => size_format($file_size)
+                ]);
+            } else {
+                $this->log_debug('ERROR: Output file not created');
+            }
+
             $imagick->clear();
             $imagick->destroy();
 
@@ -568,6 +666,10 @@ class MRAF_Image_Converter
                 'message' => __('Converted to WebP with Imagick', 'mraf')
             ];
         } catch (Exception $e) {
+            $this->log_debug('ERROR: Imagick exception', [
+                'error' => $e->getMessage(),
+                'code' => $e->getCode()
+            ]);
             return [
                 'success' => false,
                 'message' => sprintf(__('Imagick error: %s', 'mraf'), $e->getMessage())
@@ -580,24 +682,47 @@ class MRAF_Image_Converter
      */
     private function convert_to_webp_gd($source_path, $quality, $output_path, $image_type)
     {
+        $this->log_debug('Starting GD WebP conversion', [
+            'source' => basename($source_path),
+            'output' => basename($output_path),
+            'quality' => $quality,
+            'image_type' => $image_type
+        ]);
+
+        // Check if imagewebp function exists
+        if (!function_exists('imagewebp')) {
+            $this->log_debug('ERROR: imagewebp function not available');
+            return [
+                'success' => false,
+                'message' => __('imagewebp function not available on this server', 'mraf')
+            ];
+        }
+
         // Create source image resource
+        $source_image = null;
         switch ($image_type) {
             case IMAGETYPE_JPEG:
-                $source_image = imagecreatefromjpeg($source_path);
+                $this->log_debug('Creating JPEG image resource');
+                $source_image = @imagecreatefromjpeg($source_path);
                 break;
             case IMAGETYPE_PNG:
-                $source_image = imagecreatefrompng($source_path);
+                $this->log_debug('Creating PNG image resource');
+                $source_image = @imagecreatefrompng($source_path);
                 break;
             case IMAGETYPE_GIF:
-                $source_image = imagecreatefromgif($source_path);
+                $this->log_debug('Creating GIF image resource');
+                $source_image = @imagecreatefromgif($source_path);
                 break;
             case IMAGETYPE_WEBP:
-                $source_image = imagecreatefromwebp($source_path);
+                $this->log_debug('Creating WebP image resource');
+                $source_image = @imagecreatefromwebp($source_path);
                 break;
             case defined('IMAGETYPE_AVIF') ? IMAGETYPE_AVIF : 9999:
                 if (function_exists('imagecreatefromavif')) {
-                    $source_image = imagecreatefromavif($source_path);
+                    $this->log_debug('Creating AVIF image resource');
+                    $source_image = @imagecreatefromavif($source_path);
                 } else {
+                    $this->log_debug('ERROR: AVIF not supported by GD');
                     return [
                         'success' => false,
                         'message' => __('AVIF not supported by GD on this server', 'mraf')
@@ -605,6 +730,7 @@ class MRAF_Image_Converter
                 }
                 break;
             default:
+                $this->log_debug('ERROR: Unsupported image type: ' . $image_type);
                 return [
                     'success' => false,
                     'message' => __('Unsupported source image type', 'mraf')
@@ -612,25 +738,104 @@ class MRAF_Image_Converter
         }
 
         if (!$source_image) {
+            $error = error_get_last();
+            $this->log_debug('ERROR: Failed to create image resource', ['error' => $error]);
             return [
                 'success' => false,
-                'message' => __('Failed to create image resource from source', 'mraf')
+                'message' => __('Failed to create image resource from source. File may be corrupted.', 'mraf')
             ];
         }
 
-        // Preserve transparency
-        imagealphablending($source_image, true);
+        $this->log_debug('Image resource created successfully');
+
+        // Get image dimensions for logging
+        $width = imagesx($source_image);
+        $height = imagesy($source_image);
+        $this->log_debug('Image dimensions: ' . $width . 'x' . $height);
+
+        // Preserve transparency - CRITICAL FIX for PNG
+        // Use FALSE for alphablending when converting FROM formats with transparency
+        imagealphablending($source_image, false);
         imagesavealpha($source_image, true);
+        $this->log_debug('Transparency preservation enabled');
+
+        // Check output directory is writable
+        $output_dir = dirname($output_path);
+        if (!is_writable($output_dir)) {
+            $this->log_debug('ERROR: Output directory not writable: ' . $output_dir);
+            imagedestroy($source_image);
+            return [
+                'success' => false,
+                'message' => __('Output directory is not writable. Check permissions.', 'mraf')
+            ];
+        }
+
+        // WORKAROUND: For PNG with transparency on Windows/GD, create a clean image
+        // This fixes the imagewebp() hanging issue
+        if ($image_type === IMAGETYPE_PNG) {
+            $this->log_debug('Applying PNG transparency workaround for GD');
+            $clean_image = imagecreatetruecolor($width, $height);
+            imagealphablending($clean_image, false);
+            imagesavealpha($clean_image, true);
+
+            // Fill with transparent background
+            $transparent = imagecolorallocatealpha($clean_image, 0, 0, 0, 127);
+            imagefilledrectangle($clean_image, 0, 0, $width, $height, $transparent);
+
+            // Copy the original image onto the clean one
+            imagecopy($clean_image, $source_image, 0, 0, 0, 0, $width, $height);
+            imagedestroy($source_image);
+            $source_image = $clean_image;
+            $this->log_debug('PNG transparency workaround applied');
+        }
 
         // Convert to WebP
-        $success = imagewebp($source_image, $output_path, $quality);
+        $this->log_debug('Converting to WebP format (this may take a few seconds)...');
+
+        // Set a custom error handler to catch warnings
+        set_error_handler(function($errno, $errstr) {
+            $this->log_debug('PHP Warning during conversion: ' . $errstr);
+        });
+
+        $success = @imagewebp($source_image, $output_path, $quality);
+
+        // Restore error handler
+        restore_error_handler();
+
+        if (!$success) {
+            $error = error_get_last();
+            $this->log_debug('ERROR: imagewebp() returned false', ['error' => $error]);
+        } else {
+            $this->log_debug('imagewebp() completed successfully');
+        }
+
+        // Verify file was actually created and has content
+        if ($success && file_exists($output_path)) {
+            $file_size = filesize($output_path);
+            if ($file_size > 0) {
+                $this->log_debug('WebP conversion successful', [
+                    'output_file' => basename($output_path),
+                    'size' => size_format($file_size)
+                ]);
+                $success = true;
+            } else {
+                $this->log_debug('ERROR: Output file created but has zero size');
+                $success = false;
+                @unlink($output_path); // Remove empty file
+            }
+        } else {
+            $this->log_debug('ERROR: Output file not created or imagewebp failed');
+            $success = false;
+        }
 
         // Free memory
         imagedestroy($source_image);
 
         return [
             'success' => $success,
-            'message' => $success ? __('Converted to WebP with GD', 'mraf') : __('Failed to save WebP image', 'mraf')
+            'message' => $success
+                ? __('Converted to WebP with GD', 'mraf')
+                : __('Failed to save WebP image. Check debug log for details.', 'mraf')
         ];
     }
 
@@ -1193,6 +1398,9 @@ class MRAF_Image_Converter
                     <?php echo esc_html__('Search & Filter', 'mraf'); ?>
                     <span class="mraf-tab-badge" id="mraf-search-count" style="display:none;">0</span>
                 </button>
+                <button class="mraf-tab-btn" data-tab="debug">
+                    <?php echo esc_html__('Debug Log', 'mraf'); ?>
+                </button>
                 <button class="mraf-tab-btn" data-tab="settings">
                     <span class="dashicons dashicons-admin-generic"></span>
                     <?php echo esc_html__('Settings', 'mraf'); ?>
@@ -1314,6 +1522,38 @@ class MRAF_Image_Converter
                         </button>
                     </div>
                     <div id="mraf-search-results" class="mraf-search-results"></div>
+                </div>
+            </div>
+
+            <!-- Tab Content: Debug Log -->
+            <div class="mraf-tab-content" data-tab="debug">
+                <div class="mraf-debug-box">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 style="margin: 0;"><?php echo esc_html__('Debug Log', 'mraf'); ?></h3>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" class="mraf-btn mraf-btn-secondary" id="mraf-converter-refresh-log">
+                                <span class="dashicons dashicons-update"></span>
+                                <?php echo esc_html__('Refresh', 'mraf'); ?>
+                            </button>
+                            <button type="button" class="mraf-btn mraf-btn-secondary" id="mraf-converter-clear-log">
+                                <span class="dashicons dashicons-trash"></span>
+                                <?php echo esc_html__('Clear Log', 'mraf'); ?>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="mraf-converter-debug-log"
+                        style="font-family:monospace;white-space:pre-wrap;background:#f8f9fa;border:1px solid #ddd;padding:16px;border-radius:4px;max-height:600px;overflow-y:auto;">
+                        <?php
+                        $dbg = get_transient(self::DEBUG_KEY);
+                        if ($dbg && is_array($dbg)) {
+                            foreach ($dbg as $line) {
+                                echo esc_html($line) . "\n";
+                            }
+                        } else {
+                            echo esc_html__('No debug logs yet. Logs will appear here after conversion operations.', 'mraf');
+                        }
+                        ?>
+                    </div>
                 </div>
             </div>
 
@@ -1514,9 +1754,13 @@ class MRAF_Image_Converter
      */
     public function ajax_convert_single_image()
     {
+        $this->log_debug('========================================');
+        $this->log_debug('AJAX: Convert single image REQUEST RECEIVED');
+
         check_ajax_referer(self::NONCE_ACTION, 'nonce');
 
         if (!current_user_can('upload_files')) {
+            $this->log_debug('ERROR: Permission denied for user');
             wp_send_json_error(['message' => __('Permission denied.', 'mraf')]);
         }
 
@@ -1531,16 +1775,39 @@ class MRAF_Image_Converter
         $update_refs = !empty($_POST['update_refs']) && $_POST['update_refs'] !== 'false';
         $create_backup = !empty($_POST['create_backup']) && $_POST['create_backup'] !== 'false';
 
+        $this->log_debug('Request parameters', [
+            'attachment_id' => $attachment_id,
+            'title' => $new_title,
+            'quality' => $quality,
+            'enable_resize' => $enable_resize ? 'yes' : 'no',
+            'max_width' => $max_width,
+            'delete_original' => $delete_original ? 'yes' : 'no',
+            'keep_basename' => $keep_basename ? 'yes' : 'no',
+            'create_backup' => $create_backup ? 'yes' : 'no'
+        ]);
+
         // Validate attachment
         if (empty($attachment_id)) {
+            $this->log_debug('ERROR: Invalid attachment ID');
             wp_send_json_error(['message' => __('Invalid attachment ID.', 'mraf')]);
         }
 
         // Get attachment file path
         $file_path = get_attached_file($attachment_id);
         if (!$file_path || !file_exists($file_path)) {
+            $this->log_debug('ERROR: Attachment file not found', [
+                'attachment_id' => $attachment_id,
+                'file_path' => $file_path
+            ]);
             wp_send_json_error(['message' => __('Attachment file not found.', 'mraf')]);
         }
+
+        $this->log_debug('Attachment file found', [
+            'file_path' => $file_path,
+            'file_size' => size_format(filesize($file_path)),
+            'mime_type' => get_post_mime_type($attachment_id)
+        ]);
+
         $old_url = wp_get_attachment_url($attachment_id);
         $old_base = pathinfo($file_path, PATHINFO_FILENAME);
 
@@ -1548,6 +1815,7 @@ class MRAF_Image_Converter
         $temp_file = $file_path;
 
         try {
+            $this->log_debug('Starting conversion process...');
             if ($create_backup) {
                 $this->create_backup($attachment_id);
                 $conversion_log[] = __('Backup created before conversion.', 'mraf');
@@ -1636,6 +1904,13 @@ class MRAF_Image_Converter
             // Mark as converted server-side for UI/filters
             update_post_meta($attachment_id, '_mraf_converted', current_time('timestamp'));
 
+            $this->log_debug('✓ CONVERSION COMPLETED SUCCESSFULLY', [
+                'attachment_id' => $attachment_id,
+                'output_file' => basename($webp_path),
+                'compression_ratio' => $webp_result['compression_ratio'] . '%'
+            ]);
+            $this->log_debug('========================================');
+
             wp_send_json_success([
                 'message' => __('Image converted and replaced successfully!', 'mraf'),
                 'attachment_id' => $attachment_id,
@@ -1647,6 +1922,13 @@ class MRAF_Image_Converter
             ]);
 
         } catch (Exception $e) {
+            $this->log_debug('✗ CONVERSION FAILED WITH EXCEPTION', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            $this->log_debug('========================================');
+
             if ($temp_file !== $file_path && file_exists($temp_file)) {
                 @unlink($temp_file);
             }
@@ -1692,8 +1974,18 @@ class MRAF_Image_Converter
             wp_send_json_error(['message' => __('Permission denied.', 'mraf')]);
         }
 
-        $debug_log = get_option(self::DEBUG_KEY, []);
-        wp_send_json_success(['log' => array_reverse($debug_log)]);
+        // Clear log if requested
+        if (isset($_POST['clear']) && $_POST['clear']) {
+            delete_transient(self::DEBUG_KEY);
+            wp_send_json_success(['log' => __('Log cleared.', 'mraf')]);
+            return;
+        }
+
+        // Get debug log from transient
+        $debug_log = get_transient(self::DEBUG_KEY);
+        $log = ($debug_log && is_array($debug_log)) ? implode("\n", $debug_log) : __('No debug logs yet.', 'mraf');
+
+        wp_send_json_success(['log' => $log]);
     }
 
     /**
@@ -1701,25 +1993,24 @@ class MRAF_Image_Converter
      */
     private function log_debug($message, $data = null)
     {
-        $debug_log = get_option(self::DEBUG_KEY, []);
+        $debug_log = get_transient(self::DEBUG_KEY);
+        $debug_log = is_array($debug_log) ? $debug_log : [];
 
-        $entry = [
-            'time' => current_time('mysql'),
-            'message' => $message
-        ];
+        // Format message with timestamp
+        $formatted_message = '[' . gmdate('Y-m-d H:i:s') . 'Z] ' . $message;
 
         if ($data !== null) {
-            $entry['data'] = $data;
+            $formatted_message .= ' | Data: ' . json_encode($data);
         }
 
-        $debug_log[] = $entry;
+        $debug_log[] = $formatted_message;
 
         // Keep only last 100 entries
         if (count($debug_log) > 100) {
             $debug_log = array_slice($debug_log, -100);
         }
 
-        update_option(self::DEBUG_KEY, $debug_log);
+        set_transient(self::DEBUG_KEY, $debug_log, HOUR_IN_SECONDS);
     }
 
     /**
@@ -1727,7 +2018,7 @@ class MRAF_Image_Converter
      */
     public function clear_debug_log()
     {
-        delete_option(self::DEBUG_KEY);
+        delete_transient(self::DEBUG_KEY);
     }
 
     /**

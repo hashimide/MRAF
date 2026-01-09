@@ -13,6 +13,7 @@
             this.checkServerRequirements();
             this.loadViewPreference();
             this.initTabs();
+            this.initDebugTab();
         },
 
         cacheElements: function() {
@@ -468,7 +469,12 @@
 
         convertSingle: function(fileId) {
             const fileData = this.selectedFiles.find(f => f.id === fileId);
-            if (!fileData) return;
+            if (!fileData) {
+                console.error('MRAF Converter: File not found', fileId);
+                return;
+            }
+
+            console.log('MRAF Converter: Starting conversion', fileData);
 
             this.updateFileStatus(fileId, 'processing');
 
@@ -486,6 +492,8 @@
                 create_backup: this.$createBackup.is(':checked') ? 'true' : 'false'
             };
 
+            console.log('MRAF Converter: AJAX Request Data', data);
+
             const self = this;
 
             $.ajax({
@@ -493,6 +501,7 @@
                 type: 'POST',
                 data: data,
                 success: function(response) {
+                    console.log('MRAF Converter: AJAX Response', response);
                     if (response.success) {
                         self.updateFileStatus(fileId, 'success',
                             'Converted successfully! Compression: ' + response.data.compression_ratio + '%');
@@ -501,11 +510,13 @@
                             self.markSearchItemConverted(fileData.attachment_id);
                         }
                     } else {
+                        console.error('MRAF Converter: Conversion failed', response.data);
                         self.updateFileStatus(fileId, 'error', response.data.message);
                         self.showNotice(response.data.message, 'error');
                     }
                 },
-                error: function() {
+                error: function(xhr, status, error) {
+                    console.error('MRAF Converter: AJAX Error', {xhr, status, error});
                     self.updateFileStatus(fileId, 'error', mrafConverterData.strings.convertError);
                     self.showNotice(mrafConverterData.strings.convertError, 'error');
                 }
@@ -799,6 +810,41 @@
             } else {
                 this.showNotice('No new images to add. They may already be in the list.', 'info');
             }
+        },
+
+        initDebugTab: function() {
+            const self = this;
+
+            $('#mraf-converter-refresh-log').on('click', function() {
+                self.refreshDebugLog();
+            });
+
+            $('#mraf-converter-clear-log').on('click', function() {
+                self.clearDebugLog();
+            });
+        },
+
+        refreshDebugLog: function() {
+            $.post(mrafConverterData.ajaxUrl, {
+                action: 'mraf_get_converter_debug',
+                nonce: mrafConverterData.nonce
+            }, function(response) {
+                if (response.success) {
+                    $('#mraf-converter-debug-log').text(response.data.log);
+                }
+            });
+        },
+
+        clearDebugLog: function() {
+            $.post(mrafConverterData.ajaxUrl, {
+                action: 'mraf_get_converter_debug',
+                nonce: mrafConverterData.nonce,
+                clear: 1
+            }, function(response) {
+                if (response.success) {
+                    $('#mraf-converter-debug-log').text(response.data.log);
+                }
+            });
         },
 
         escapeHtml: function(text) {
