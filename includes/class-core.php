@@ -31,9 +31,9 @@ class MRAF_Core
 
         if (is_admin()) {
             require_once MRAF_PLUGIN_DIR . 'admin/class-admin.php';
-            require_once MRAF_PLUGIN_DIR . 'admin/class-bulk-replace.php';
+            require_once MRAF_PLUGIN_DIR . 'admin/class-media-studio.php';
+            require_once MRAF_PLUGIN_DIR . 'admin/class-library-studio.php';
             require_once MRAF_PLUGIN_DIR . 'admin/class-image-usage.php';
-            require_once MRAF_PLUGIN_DIR . 'admin/class-image-converter.php';
         }
     }
 
@@ -57,10 +57,10 @@ class MRAF_Core
             return;
         }
 
-        $admin = new MRAF_Admin($this->get_plugin_name(), $this->get_version());
-        $bulk_replace = new MRAF_Bulk_Replace();
-        $image_usage = new MRAF_Image_Usage();
-        $image_converter = new MRAF_Image_Converter();
+        $admin        = new MRAF_Admin($this->get_plugin_name(), $this->get_version());
+        $media_studio = new MRAF_Media_Studio();
+        $image_usage  = new MRAF_Image_Usage();
+        $library      = new MRAF_Library_Studio();
 
         add_filter('upload_mimes', array($admin, 'allow_webp_mime'));
         add_action('post_edit_form_tag', array($admin, 'force_multipart_form'));

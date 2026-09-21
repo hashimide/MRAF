@@ -1,0 +1,1559 @@
+/**
+ * MRAF Media Studio
+ *
+ * One stylesheet for the Studio page, the job modal and the pieces the plugin
+ * adds to the media library. Markup is unchanged: every class here already
+ * exists in the PHP and the JS.
+ */
+
+/* ==========================================================================
+   Design tokens
+   ========================================================================== */
+:root {
+    /* Surfaces */
+    --mraf-canvas: #ffffff;
+    --mraf-surface: #ffffff;
+    --mraf-surface-2: #fbfbfe;
+    --mraf-line: #e4e5f0;
+    --mraf-line-soft: #eef0f7;
+
+    /* Ink */
+    --mraf-ink: #16182d;
+    --mraf-ink-2: #3c4160;
+    --mraf-muted: #6d7391;
+    --mraf-muted-solid: #6d7391;
+
+    /* Iris, the house colour */
+    --mraf-iris: #5546e8;
+    --mraf-iris-deep: #4436cf;
+    --mraf-iris-ink: #2e238f;
+    --mraf-iris-tint: #f0eeff;
+    --mraf-iris-line: #d9d4fb;
+
+    /* Accents */
+    --mraf-jade: #0f9d76;
+    --mraf-jade-tint: #e8f8f2;
+    --mraf-jade-ink: #08624a;
+    --mraf-amber: #c2790b;
+    --mraf-amber-tint: #fdf3e2;
+    --mraf-amber-ink: #7d4f06;
+    --mraf-rose: #d4344f;
+    --mraf-rose-tint: #fdedf0;
+    --mraf-rose-ink: #8e1f33;
+
+    /* Kept for older rules that referenced them */
+    --mraf-blue: var(--mraf-iris);
+    --mraf-blue-dark: var(--mraf-iris-deep);
+    --mraf-soft: var(--mraf-surface-2);
+    --mraf-green: var(--mraf-jade);
+    --mraf-green-bg: var(--mraf-jade-tint);
+    --mraf-green-ink: var(--mraf-jade-ink);
+    --mraf-amber-bg: var(--mraf-amber-tint);
+    --mraf-amber-line: #eddcb9;
+    --mraf-red: var(--mraf-rose);
+
+    /* Form */
+    --mraf-radius: 14px;
+    --mraf-radius-sm: 9px;
+    --mraf-radius-pill: 999px;
+    --mraf-ring: 0 0 0 3px rgba(85, 70, 232, .16);
+}
+
+/* ==========================================================================
+   Page shell
+   ========================================================================== */
+
+/* WordPress paints #f0f0f1 behind the page, so the studio screen resets it. */
+body[class*="mraf-media-studio"],
+body[class*="mraf-media-studio"] #wpwrap,
+body[class*="mraf-media-studio"] #wpcontent,
+body[class*="mraf-media-studio"] #wpbody,
+body[class*="mraf-media-studio"] #wpbody-content {
+    background: var(--mraf-canvas);
+}
+
+.mraf-studio {
+    max-width: none;
+    margin: 0 22px 0 0;
+    padding-bottom: 40px;
+    color: var(--mraf-ink);
+    font-size: 13.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+.mraf-studio *,
+.mraf-studio *::before,
+.mraf-studio *::after {
+    box-sizing: border-box;
+}
+
+/* WordPress sets display on .button, which would otherwise beat [hidden]. */
+.mraf-studio [hidden],
+.mraf-modal [hidden] {
+    display: none !important;
+}
+
+/* ==========================================================================
+   Masthead
+   ========================================================================== */
+.mraf-head {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin: 0 -22px 20px -20px;
+    padding: 30px 34px;
+    border-radius: 0;
+    overflow: hidden;
+    background:
+        radial-gradient(120% 180% at 100% 0%, rgba(255, 255, 255, .22) 0%, rgba(255, 255, 255, 0) 55%),
+        linear-gradient(118deg, #221a63 0%, #4436cf 46%, #6d5cf5 100%);
+    color: #fff;
+}
+
+/* A faint grid, so the band is not a flat slab of colour. */
+.mraf-head::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, .06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .06) 1px, transparent 1px);
+    background-size: 26px 26px;
+    -webkit-mask-image: linear-gradient(100deg, #000 0%, transparent 62%);
+    mask-image: linear-gradient(100deg, #000 0%, transparent 62%);
+    pointer-events: none;
+}
+
+.mraf-head > div {
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+}
+
+.mraf-head h1 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    color: #fff;
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: -.021em;
+    line-height: 1.2;
+}
+
+.mraf-ver {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: var(--mraf-radius-pill);
+    border: 1px solid rgba(255, 255, 255, .28);
+    background: rgba(255, 255, 255, .14);
+    color: rgba(255, 255, 255, .92);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
+.mraf-head .description {
+    max-width: 68ch;
+    margin: 9px 0 0;
+    color: rgba(255, 255, 255, .78);
+    font-size: 13.5px;
+}
+
+.mraf-head .description a {
+    color: #fff;
+    text-decoration-color: rgba(255, 255, 255, .5);
+    text-underline-offset: 3px;
+}
+
+.mraf-engine {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    padding: 9px 16px 9px 12px;
+    border-radius: var(--mraf-radius-pill);
+    border: 1px solid rgba(255, 255, 255, .22);
+    background: rgba(255, 255, 255, .12);
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    backdrop-filter: blur(6px);
+}
+
+.mraf-engine .dashicons {
+    width: 17px;
+    height: 17px;
+    font-size: 17px;
+    line-height: 1;
+}
+
+.mraf-engine.is-ok .dashicons {
+    color: #6ff0c2;
+}
+
+.mraf-engine.is-warn {
+    border-color: rgba(255, 214, 148, .5);
+    background: rgba(255, 190, 104, .22);
+}
+
+.mraf-engine.is-warn .dashicons {
+    color: #ffd08a;
+}
+
+/* ==========================================================================
+   Tabs
+   ========================================================================== */
+.mraf-tabs {
+    display: flex;
+    gap: 26px;
+    margin: 0 0 22px;
+    padding: 0;
+    border-bottom: 1px solid var(--mraf-line);
+    background: transparent;
+}
+
+.mraf-tabs button {
+    appearance: none;
+    position: relative;
+    padding: 10px 2px 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--mraf-muted-solid);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    line-height: 1.4;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color .15s ease;
+}
+
+/* The underline sits on the tab, flush with the nav's bottom border. */
+.mraf-tabs button::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    height: 2px;
+    background: transparent;
+}
+
+.mraf-tabs button:hover {
+    color: var(--mraf-iris-ink);
+}
+
+.mraf-tabs button:focus-visible {
+    outline: 0;
+    box-shadow: var(--mraf-ring);
+}
+
+.mraf-tabs button.is-active {
+    background: transparent;
+    color: var(--mraf-iris);
+}
+
+.mraf-tabs button.is-active::after {
+    background: var(--mraf-iris);
+}
+
+.mraf-panel[hidden] {
+    display: none;
+}
+
+/* ==========================================================================
+   Shared small parts
+   ========================================================================== */
+.mraf-bar__spacer {
+    flex-grow: 1;
+}
+
+.mraf-linkbtn {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--mraf-iris);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: rgba(85, 70, 232, .35);
+    text-underline-offset: 3px;
+}
+
+.mraf-linkbtn:hover {
+    color: var(--mraf-iris-deep);
+    text-decoration-color: currentColor;
+}
+
+.mraf-badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: var(--mraf-radius-pill);
+    border: 1px solid var(--mraf-line);
+    background: var(--mraf-surface-2);
+    color: var(--mraf-ink-2);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    line-height: 1.7;
+    text-transform: uppercase;
+}
+
+.mraf-badge.is-ok {
+    border-color: rgba(15, 157, 118, .28);
+    background: var(--mraf-jade-tint);
+    color: var(--mraf-jade-ink);
+}
+
+/* Primary buttons inside the studio and the modal follow the house colour. */
+.mraf-studio .button.button-primary,
+.mraf-modal .button.button-primary {
+    border: 0;
+    border-radius: var(--mraf-radius-sm);
+    background: linear-gradient(140deg, var(--mraf-iris) 0%, var(--mraf-iris-deep) 100%);
+    color: #fff;
+    font-weight: 600;
+    text-shadow: none;
+}
+
+.mraf-studio .button.button-primary:hover,
+.mraf-modal .button.button-primary:hover {
+    background: linear-gradient(140deg, var(--mraf-iris-deep) 0%, #372aab 100%);
+    color: #fff;
+}
+
+.mraf-studio .button.button-primary:disabled,
+.mraf-modal .button.button-primary:disabled {
+    background: #c8c6e8;
+    box-shadow: none;
+    color: #fff !important;
+}
+
+.mraf-studio .button,
+.mraf-modal .button {
+    border-radius: var(--mraf-radius-sm);
+    border-color: var(--mraf-line);
+    color: var(--mraf-ink-2);
+    font-weight: 500;
+}
+
+.mraf-studio .button:hover,
+.mraf-modal .button:hover {
+    border-color: var(--mraf-iris-line);
+    background: var(--mraf-iris-tint);
+    color: var(--mraf-iris-ink);
+}
+
+.mraf-studio input[type="search"],
+.mraf-studio input[type="text"],
+.mraf-studio input[type="number"],
+.mraf-studio select,
+.mraf-modal input[type="text"],
+.mraf-modal input[type="number"],
+.mraf-modal textarea,
+.mraf-modal select {
+    border-radius: var(--mraf-radius-sm);
+    border-color: var(--mraf-line);
+    color: var(--mraf-ink);
+}
+
+.mraf-studio input:focus,
+.mraf-studio select:focus,
+.mraf-modal input:focus,
+.mraf-modal textarea:focus,
+.mraf-modal select:focus {
+    border-color: var(--mraf-iris);
+    box-shadow: var(--mraf-ring);
+    outline: 0;
+}
+
+/* ==========================================================================
+   Workspace gallery
+   ========================================================================== */
+.mraf-browser {
+    background: var(--mraf-surface);
+}
+
+.mraf-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--mraf-line-soft);
+    background: transparent;
+}
+
+.mraf-bar[hidden] {
+    display: none;
+}
+
+/* Every control in the bar shares one height, so the row reads as one line. */
+.mraf-bar input[type="search"],
+.mraf-bar select,
+.mraf-bar .button {
+    height: 36px;
+    min-height: 36px;
+    box-sizing: border-box;
+    margin: 0;
+    line-height: 34px;
+    font-size: 13px;
+}
+
+.mraf-bar input[type="search"] {
+    flex: 1 1 240px;
+    max-width: 380px;
+    padding: 0 12px;
+}
+
+.mraf-bar select {
+    flex: 0 0 auto;
+    min-width: 138px;
+    padding: 0 30px 0 12px;
+    background-position: right 10px top 55%;
+}
+
+.mraf-bar .button {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 16px;
+}
+
+.mraf-bar--sel {
+    background: linear-gradient(180deg, var(--mraf-iris-tint) 0%, #f7f6ff 100%);
+    border-bottom-color: var(--mraf-iris-line);
+}
+
+.mraf-bar--sel strong {
+    color: var(--mraf-iris-ink);
+    font-size: 13px;
+}
+
+.mraf-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+    padding: 18px 0;
+    background: var(--mraf-surface);
+}
+
+.mraf-tile {
+    position: relative;
+    display: block;
+    padding: 0;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius);
+    background: var(--mraf-surface);
+    cursor: pointer;
+    overflow: hidden;
+    text-align: left;
+    transition: transform .16s ease, border-color .16s ease;
+}
+
+.mraf-tile:hover {
+    transform: translateY(-3px);
+    border-color: var(--mraf-iris-line);
+}
+
+.mraf-tile:focus-visible {
+    outline: 0;
+    box-shadow: var(--mraf-ring);
+}
+
+.mraf-tile.is-selected {
+    border-color: var(--mraf-iris);
+    box-shadow: 0 0 0 2px var(--mraf-iris) inset;
+}
+
+.mraf-tile__shot {
+    position: relative;
+    display: block;
+}
+
+.mraf-tile__img {
+    display: block;
+    width: 100%;
+    height: 136px;
+    object-fit: cover;
+    background:
+        linear-gradient(135deg, #eeeff6 0%, #e6e7f2 100%);
+}
+
+/* Pixel size reads over the thumbnail, so the caption stays short. */
+.mraf-tile__dim {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    padding: 2px 7px;
+    border-radius: var(--mraf-radius-pill);
+    background: rgba(14, 15, 34, .62);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .01em;
+    opacity: 0;
+    transition: opacity .16s ease;
+}
+
+.mraf-tile:hover .mraf-tile__dim,
+.mraf-tile:focus-visible .mraf-tile__dim {
+    opacity: 1;
+}
+
+.mraf-tile__cap {
+    display: block;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--mraf-line-soft);
+}
+
+.mraf-tile__name {
+    display: block;
+    color: var(--mraf-ink);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: -.005em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mraf-tile__meta {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    margin-top: 7px;
+    color: var(--mraf-muted-solid);
+    font-size: 11px;
+}
+
+.mraf-tile__date {
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.mraf-tile__size {
+    white-space: nowrap;
+}
+
+.mraf-tile__flags {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.mraf-flag {
+    padding: 2px 7px;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-pill);
+    background: var(--mraf-surface-2);
+    color: var(--mraf-muted-solid);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+.mraf-flag.is-ok {
+    border-color: rgba(15, 157, 118, .28);
+    background: var(--mraf-jade-tint);
+    color: var(--mraf-jade-ink);
+}
+
+.mraf-flag.is-warn {
+    border-color: #eddcb9;
+    background: var(--mraf-amber-tint);
+    color: var(--mraf-amber-ink);
+}
+
+.mraf-tile__tick {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: none;
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(22, 24, 45, .12);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .92);
+    color: var(--mraf-iris);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 22px;
+    text-align: center;
+}
+
+.mraf-browser.is-bulk .mraf-tile__tick {
+    display: block;
+}
+
+.mraf-tile.is-selected .mraf-tile__tick {
+    border-color: var(--mraf-iris);
+    background: var(--mraf-iris);
+    color: #fff;
+}
+
+.mraf-browser__foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 13px 0;
+    border-top: 1px solid var(--mraf-line-soft);
+    background: transparent;
+    color: var(--mraf-muted-solid);
+    font-size: 12px;
+}
+
+.mraf-browser__foot .spinner {
+    float: none;
+    margin: 0;
+    visibility: hidden;
+}
+
+.mraf-browser__foot .spinner.is-active {
+    visibility: visible;
+}
+
+.mraf-hint strong {
+    color: var(--mraf-ink-2);
+}
+
+.mraf-empty {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 56px 0;
+    color: var(--mraf-muted-solid);
+    text-align: center;
+}
+
+/* ==========================================================================
+   Cards, tables, console
+   ========================================================================== */
+.mraf-card {
+    margin-bottom: 18px;
+    padding: 22px 24px;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius);
+    background: var(--mraf-surface);
+}
+
+.mraf-card__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.mraf-card__head h2 {
+    margin: 0;
+}
+
+.mraf-card h2 {
+    margin: 0 0 14px;
+    color: var(--mraf-ink);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -.012em;
+}
+
+/* Section heads inside the one settings card. */
+.mraf-card h3 {
+    margin: 22px 0 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--mraf-line-soft);
+    color: var(--mraf-muted-solid);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.mraf-card .description {
+    color: var(--mraf-muted-solid);
+}
+
+.mraf-info {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.mraf-info td {
+    padding: 9px 0;
+    border-bottom: 1px solid var(--mraf-line-soft);
+    font-size: 13px;
+    vertical-align: middle;
+}
+
+.mraf-info tr:last-child td {
+    border-bottom: 0;
+}
+
+.mraf-info td:first-child {
+    width: 240px;
+    color: var(--mraf-muted-solid);
+    font-weight: 500;
+}
+
+.mraf-pill {
+    display: inline-block;
+    padding: 3px 11px;
+    border-radius: var(--mraf-radius-pill);
+    border: 1px solid var(--mraf-line);
+    background: var(--mraf-surface-2);
+    color: var(--mraf-ink-2);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.mraf-pill.is-ok {
+    border-color: rgba(15, 157, 118, .28);
+    background: var(--mraf-jade-tint);
+    color: var(--mraf-jade-ink);
+}
+
+.mraf-pill.is-bad {
+    border-color: rgba(212, 52, 79, .26);
+    background: var(--mraf-rose-tint);
+    color: var(--mraf-rose-ink);
+}
+
+.mraf-console {
+    max-height: 460px;
+    margin: 0;
+    padding: 18px 20px;
+    border: 1px solid #23264a;
+    border-radius: var(--mraf-radius-sm);
+    background:
+        radial-gradient(80% 120% at 0% 0%, rgba(109, 92, 245, .22) 0%, rgba(109, 92, 245, 0) 60%),
+        #12142b;
+    color: #cfd2ef;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.75;
+    overflow: auto;
+    white-space: pre-wrap;
+}
+
+.mraf-table {
+    border-radius: var(--mraf-radius-sm);
+    border-color: var(--mraf-line);
+    overflow: hidden;
+}
+
+.mraf-table thead th {
+    background: var(--mraf-surface-2);
+    color: var(--mraf-muted-solid);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.mraf-table td {
+    vertical-align: middle;
+}
+
+/* ==========================================================================
+   Job modal
+   ========================================================================== */
+.mraf-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 160000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    background: rgba(14, 15, 34, .62);
+}
+
+.mraf-modal[hidden] {
+    display: none;
+}
+
+.mraf-modal__box {
+    display: flex;
+    flex-direction: column;
+    width: min(980px, 100%);
+    height: min(820px, 90vh);
+    max-height: 90vh;
+    border-radius: 18px;
+    background: var(--mraf-surface);
+    overflow: hidden;
+}
+
+/* The head carries the convert action, so its buttons stay on one line. */
+.mraf-modal__head #mraf-m-convert {
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.mraf-modal__head #mraf-m-convert + .button {
+    margin-left: 8px;
+}
+
+.mraf-runnote {
+    margin-top: 14px;
+}
+
+.mraf-modal__head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--mraf-line-soft);
+    background: linear-gradient(180deg, #fbfaff 0%, var(--mraf-surface) 100%);
+}
+
+.mraf-modal__thumbs {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+.mraf-modal__thumbs img {
+    width: 46px;
+    height: 46px;
+    margin-left: -12px;
+    border: 2px solid #fff;
+    border-radius: 12px;
+    background: var(--mraf-surface-2);
+    object-fit: cover;
+}
+
+.mraf-modal__thumbs img:first-child {
+    margin-left: 0;
+}
+
+.mraf-modal__id {
+    min-width: 0;
+    flex: 1;
+}
+
+.mraf-modal__id strong {
+    display: block;
+    color: var(--mraf-ink);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -.012em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mraf-modal__id span {
+    display: block;
+    margin-top: 2px;
+    color: var(--mraf-muted-solid);
+    font-size: 12px;
+}
+
+.mraf-modal__tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 22px;
+    border-bottom: 1px solid var(--mraf-line-soft);
+    background: var(--mraf-surface);
+}
+
+.mraf-modal__tabs button {
+    position: relative;
+    appearance: none;
+    padding: 13px 4px;
+    margin-right: 22px;
+    border: 0;
+    background: none;
+    color: var(--mraf-muted-solid);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.mraf-modal__tabs button:hover {
+    color: var(--mraf-ink);
+}
+
+.mraf-modal__tabs button.is-active {
+    color: var(--mraf-iris-ink);
+}
+
+.mraf-modal__tabs button.is-active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2.5px;
+    border-radius: 3px 3px 0 0;
+    background: linear-gradient(90deg, var(--mraf-iris) 0%, #8b7bff 100%);
+}
+
+.mraf-modal__body {
+    flex: 1 1 auto;
+    padding: 22px;
+    overflow: auto;
+    background: var(--mraf-surface);
+}
+
+.mraf-mp[hidden] {
+    display: none;
+}
+
+.mraf-modal__foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 15px 22px;
+    border-top: 1px solid var(--mraf-line-soft);
+    background: var(--mraf-surface-2);
+}
+
+.mraf-modal__foot .description {
+    margin: 0;
+    color: var(--mraf-muted-solid);
+    font-size: 12px;
+}
+
+body.mraf-modal-open {
+    overflow: hidden;
+}
+
+/* --- fields ------------------------------------------------------------- */
+.mraf-field {
+    margin-bottom: 18px;
+}
+
+.mraf-field > label {
+    display: block;
+    margin-bottom: 7px;
+    color: var(--mraf-ink);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.mraf-field .description {
+    margin: 7px 0 0;
+    color: var(--mraf-muted-solid);
+    font-size: 12px;
+}
+
+.mraf-range {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.mraf-range input[type="range"] {
+    flex: 1;
+    accent-color: var(--mraf-iris);
+}
+
+.mraf-range output {
+    min-width: 54px;
+    padding: 5px 0;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-surface-2);
+    color: var(--mraf-iris-ink);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.mraf-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 11px 13px;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-surface-2);
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.mraf-check:hover {
+    border-color: var(--mraf-iris-line);
+    background: var(--mraf-iris-tint);
+}
+
+.mraf-check input[type="checkbox"] {
+    margin: 2px 0 0;
+    accent-color: var(--mraf-iris);
+}
+
+.mraf-check input[type="number"] {
+    width: 92px;
+    margin: 0 5px;
+    height: 28px;
+}
+
+.mraf-adv {
+    margin-top: 16px;
+    padding: 4px 0 0;
+    border-top: 1px dashed var(--mraf-line);
+}
+
+.mraf-adv > summary {
+    padding: 10px 0;
+    color: var(--mraf-iris);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+}
+
+.mraf-adv > summary::-webkit-details-marker {
+    display: none;
+}
+
+.mraf-adv > summary::before {
+    content: "+ ";
+    font-weight: 700;
+}
+
+.mraf-adv[open] > summary::before {
+    content: "\2212 ";
+}
+
+.mraf-adv .mraf-check:last-child {
+    margin-bottom: 4px;
+}
+
+.mraf-rowline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.mraf-rowline .description {
+    margin: 0;
+    color: var(--mraf-muted-solid);
+}
+
+/* --- replace: pairing rows ---------------------------------------------- */
+.mraf-pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-surface);
+}
+
+.mraf-pair__side {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-width: 0;
+}
+
+.mraf-pair__side img {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: var(--mraf-surface-2);
+    object-fit: cover;
+}
+
+.mraf-pair__name {
+    display: block;
+    color: var(--mraf-ink);
+    font-size: 12.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mraf-pair__meta {
+    display: block;
+    color: var(--mraf-muted-solid);
+    font-size: 11.5px;
+}
+
+.mraf-pair__arrow {
+    color: var(--mraf-iris);
+    font-size: 15px;
+    text-align: center;
+}
+
+.mraf-slot {
+    display: block;
+    width: 100%;
+    padding: 15px 12px;
+    border: 1.5px dashed var(--mraf-iris-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-iris-tint);
+    color: var(--mraf-iris-ink);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.mraf-slot:hover,
+.mraf-slot.is-over {
+    border-color: var(--mraf-iris);
+    background: #e7e3ff;
+}
+
+.mraf-slot.is-busy {
+    opacity: .6;
+    cursor: progress;
+}
+
+.mraf-filled {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 9px 11px;
+    border: 1px solid rgba(15, 157, 118, .3);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-jade-tint);
+}
+
+.mraf-filled img {
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+    background: #fff;
+    object-fit: cover;
+}
+
+.mraf-note {
+    margin: 12px 0 0;
+    padding: 13px 15px;
+    border: 1px solid var(--mraf-amber-line);
+    border-left: 3px solid var(--mraf-amber);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-amber-tint);
+    color: var(--mraf-amber-ink);
+    font-size: 12.5px;
+}
+
+.mraf-pool {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 7px;
+    padding: 12px 13px;
+    border: 1px solid var(--mraf-iris-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-iris-tint);
+}
+
+.mraf-pool__opt {
+    width: 100%;
+    padding: 7px 11px;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-sm);
+    background: #fff;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.mraf-pool__opt:hover {
+    border-color: var(--mraf-iris);
+    color: var(--mraf-iris-ink);
+}
+
+/* --- details tab --------------------------------------------------------- */
+.mraf-form {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 14px 20px;
+    align-items: start;
+}
+
+.mraf-form > label {
+    padding-top: 7px;
+    color: var(--mraf-ink);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.mraf-form input[type="text"],
+.mraf-form textarea {
+    width: 100%;
+}
+
+.mraf-form textarea {
+    resize: vertical;
+}
+
+.mraf-form input[readonly] {
+    background: var(--mraf-surface-2);
+    color: var(--mraf-muted-solid);
+}
+
+.mraf-form .description {
+    margin: 6px 0 0;
+    color: var(--mraf-muted-solid);
+    font-size: 12px;
+}
+
+.mraf-dlinks {
+    margin: 18px 0 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--mraf-line-soft);
+    color: var(--mraf-muted-solid);
+    font-size: 12.5px;
+}
+
+.mraf-dlinks a {
+    color: var(--mraf-iris);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.mraf-dlinks a:hover {
+    text-decoration: underline;
+}
+
+.mraf-multi-note {
+    margin: 0;
+    padding: 40px 0;
+    color: var(--mraf-muted-solid);
+    text-align: center;
+}
+
+#mraf-d-usage .mraf-usage-group {
+    margin-bottom: 12px;
+    padding: 11px 13px;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-surface-2);
+}
+
+#mraf-d-usage ul {
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+#mraf-d-usage li {
+    padding: 5px 0;
+    border-bottom: 1px solid var(--mraf-line-soft);
+    font-size: 12.5px;
+}
+
+#mraf-d-usage li:last-child {
+    border-bottom: 0;
+}
+
+/* --- run tab ------------------------------------------------------------- */
+.mraf-prog {
+    height: 6px;
+    margin: 12px 0 18px;
+    border-radius: var(--mraf-radius-pill);
+    background: var(--mraf-line-soft);
+    overflow: hidden;
+}
+
+.mraf-prog > i {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--mraf-iris) 0%, #8b7bff 100%);
+    transition: width .25s ease;
+}
+
+/* The run log reads as a list of steps, not a terminal. */
+.mraf-log {
+    max-height: 320px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-surface);
+    color: var(--mraf-ink-2);
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1.5;
+    overflow: auto;
+    white-space: normal;
+}
+
+.mraf-log > div {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--mraf-line-soft);
+}
+
+.mraf-log__mark {
+    flex: 0 0 auto;
+    width: 14px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.mraf-log__name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mraf-log__note {
+    flex: 0 0 auto;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    opacity: .85;
+}
+
+/* One line that states the outcome of the whole run. */
+.mraf-runsum {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 12px 16px;
+    border: 1px solid rgba(15, 157, 118, .28);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-jade-tint);
+    color: var(--mraf-jade-ink);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.mraf-runsum.is-bad {
+    border-color: rgba(212, 52, 79, .28);
+    background: var(--mraf-rose-tint);
+    color: var(--mraf-rose-ink);
+}
+
+.mraf-runsum__mark {
+    font-size: 15px;
+}
+
+.mraf-log > div:last-child {
+    border-bottom: 0;
+}
+
+.mraf-log .ok .mraf-log__mark {
+    color: var(--mraf-jade);
+}
+
+.mraf-log .warn .mraf-log__mark {
+    color: var(--mraf-amber);
+}
+
+.mraf-log .bad {
+    color: var(--mraf-rose-ink);
+    background: var(--mraf-rose-tint);
+}
+
+.mraf-log .bad .mraf-log__mark {
+    color: var(--mraf-rose);
+}
+
+.mraf-run__state {
+    font-size: 13.5px;
+}
+
+.mraf-run__pct {
+    font-variant-numeric: tabular-nums;
+}
+
+/* While a job runs the tabs would go nowhere, so they step aside. */
+.mraf-modal.is-running .mraf-modal__tabs {
+    display: none;
+}
+
+/* A run only needs the progress line, so the box shrinks to fit it. */
+.mraf-modal.is-running .mraf-modal__box {
+    height: auto;
+}
+
+/* Convert: a card per image, holding the name it will be written under. */
+#mraf-c-rows {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+}
+
+.mraf-crow {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--mraf-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-surface);
+}
+
+.mraf-crow__img {
+    width: 100%;
+    height: 96px;
+    border-radius: 8px;
+    background: var(--mraf-surface-2);
+    object-fit: cover;
+}
+
+.mraf-crow__from {
+    overflow: hidden;
+    color: var(--mraf-muted-solid);
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mraf-crow__to {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.mraf-crow__name {
+    width: 100%;
+    min-width: 0;
+    height: 32px;
+    font-size: 12.5px;
+}
+
+.mraf-crow__ext {
+    flex: 0 0 auto;
+    color: var(--mraf-muted-solid);
+    font-size: 11.5px;
+}
+
+.mraf-crow__note {
+    padding: 7px 0;
+    color: var(--mraf-muted-solid);
+    font-size: 11.5px;
+}
+
+.mraf-crow.is-skipped {
+    background: var(--mraf-surface-2);
+}
+
+.mraf-crow.is-skipped .mraf-crow__img {
+    opacity: .5;
+}
+
+
+/* ==========================================================================
+   Toast
+   ========================================================================== */
+.mraf-toast {
+    position: fixed;
+    right: 26px;
+    bottom: 26px;
+    z-index: 170000;
+    padding: 12px 18px;
+    border-radius: var(--mraf-radius-pill);
+    background: #16182d;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.mraf-toast[hidden] {
+    display: none;
+}
+
+/* ==========================================================================
+   Media library integration
+   ========================================================================== */
+.mraf-cell-muted {
+    color: var(--mraf-muted-solid);
+    font-size: 12px;
+}
+
+.column-mraf_status {
+    width: 150px;
+}
+
+.mraf-modal-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.mraf-modal-tools .button {
+    margin: 0;
+}
+
+/* ==========================================================================
+   Narrow screens
+   ========================================================================== */
+@media screen and (max-width: 960px) {
+    .mraf-studio {
+        margin-right: 12px;
+    }
+
+    .mraf-head {
+        margin: 0 -12px 18px -10px;
+        padding: 22px;
+    }
+
+    .mraf-engine {
+        margin-left: 0;
+    }
+
+    .mraf-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        border-radius: var(--mraf-radius);
+    }
+
+    .mraf-bar input[type="search"] {
+        min-width: 100%;
+    }
+
+    .mraf-form {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    .mraf-form > label {
+        padding-top: 0;
+    }
+
+    .mraf-pair {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mraf-pair__arrow {
+        display: none;
+    }
+
+    .mraf-modal {
+        padding: 0;
+    }
+
+    .mraf-modal__box {
+        max-height: 100vh;
+        border-radius: 0;
+    }
+}

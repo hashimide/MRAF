@@ -485,4 +485,434 @@ class MRAF_Image_Replacer
         delete_transient('dirsize_cache');
         do_action('mraf_after_cache_flush', $attachment_id);
     }
+
+    /**
+     * Unified reference update method for posts, postmeta, page builders, Elementor, and widgets.
+     *
+     * @param string   $old_url
+     * @param string   $new_url
+     * @param int      $attachment_id
+     * @param callable $logger_cb
+     * @return array
+     */
+    public static function update_all_references($old_url, $new_url, $attachment_id = 0, $logger_cb = null)
+    {
+        global $wpdb;
+
+        $stats = [
+            'posts'     => 0,
+            'meta'      => 0,
+            'elementor' => 0,
+            'builders'  => 0,
+            'widgets'   => 0,
+            'options'   => 0,
+            'guid'      => 0,
+        ];
+
+        $log = function ($msg) use ($logger_cb) {
+            if (is_callable($logger_cb)) {
+                call_user_func($logger_cb, $msg);
+            }
+        };
+
+        if (empty($old_url) || empty($new_url) || $old_url === $new_url) {
+            return $stats;
+        }
+
+        // 1. Update post_content, post_excerpt
+        $result = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->posts} SET
+             post_content = REPLACE(post_content, %s, %s),
+             post_excerpt = REPLACE(post_excerpt, %s, %s)
+             WHERE post_content LIKE %s OR post_excerpt LIKE %s",
+            $old_url,
+            $new_url,
+            $old_url,
+            $new_url,
+            '%' . $wpdb->esc_like($old_url) . '%',
+            '%' . $wpdb->esc_like($old_url) . '%'
+        ));
+        $stats['posts'] = $result !== false ? (int) $result : 0;
+        $log("Updated {$stats['posts']} post_content/post_excerpt rows");
+
+        // 2. Update GUID for attachment if specified
+        if ($attachment_id > 0) {
+            $guid_result = $wpdb->query($wpdb->prepare(
+                "UPDATE {$wpdb->posts} SET guid = %s WHERE ID = %d",
+                $new_url,
+                $attachment_id
+            ));
+            if ($guid_result) {
+                $stats['guid'] = 1;
+            }
+        }
+
+        // 3. Update Elementor data
+        $stats['elementor'] = self::update_elementor_urls($old_url, $new_url, $attachment_id);
+        $log("Updated {$stats['elementor']} Elementor rows");
+
+        // 4. Update other page builders (Divi, Beaver, etc.)
+        $stats['builders'] = self::update_page_builder_urls($old_url, $new_url, $attachment_id);
+        $log("Updated {$stats['builders']} page builder rows");
+
+        // 5. Update postmeta
+        $excluded_meta_keys = [
+            '_elementor_data', '_elementor_draft', '_elementor_css',
+            '_elementor_page_settings', '_elementor_controls_usage',
+            '_elementor_version', 'elementor_data', '_wpb_shortcodes_custom_css',
+            '_fl_builder_data', '_fusion', '_et_pb_'
+        ];
+        $exclude_conditions = [];
+        foreach ($excluded_meta_keys as $key) {
+            if (strpos($key, '_et_pb_') !== false) {
+                $exclude_conditions[] = $wpdb->prepare("meta_key NOT LIKE %s", $key . '%');
+            } else {
+                $exclude_conditions[] = $wpdb->prepare("meta_key != %s", $key);
+            }
+        }
+        $exclude_sql = implode(' AND ', $exclude_conditions);
+
+        // Plain text postmeta
+        $result = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->postmeta} SET meta_value = REPLACE(meta_value, %s, %s)
+            WHERE meta_value LIKE %s AND {$exclude_sql}
+            AND meta_value NOT LIKE 'a:%' AND meta_value NOT LIKE 'O:%' AND meta_value NOT LIKE '{%'",
+            $old_url,
+            $new_url,
+            '%' . $wpdb->esc_like($old_url) . '%'
+        ));
+        $stats['meta'] += ($result !== false ? (int) $result : 0);
+
+        // Serialized postmeta
+        $search = [$old_url];
+        $replace = [$new_url];
+        $like = '%' . $wpdb->esc_like($old_url) . '%';
+
+        $serialized_metas = $wpdb->get_results($wpdb->prepare(
+            "SELECT meta_id, post_id, meta_key, meta_value FROM {$wpdb->postmeta}
+            WHERE meta_value LIKE %s AND {$exclude_sql}
+            AND (meta_value LIKE 'a:%' OR meta_value LIKE 'O:%' OR meta_value LIKE '{%')",
+            $like
+        ));
+
+        foreach ($serialized_metas as $m) {
+            $raw = (string) $m->meta_value;
+            $changed = false;
+            $replaced_count = 0;
+
+            $new = self::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
+
+            if ($changed) {
+                $wpdb->update($wpdb->postmeta, ['meta_value' => $new], ['meta_id' => (int) $m->meta_id]);
+                if (isset($m->post_id)) {
+                    clean_post_cache((int) $m->post_id);
+                }
+                $stats['meta']++;
+                $log("Updated serialized meta: {$m->meta_key} (post_id: {$m->post_id}, {$replaced_count} replaced)");
+            }
+        }
+
+        // 6. Update options & widgets
+        $safe_option_prefixes = ['widget_', 'sidebars_widgets', '_transient_', 'acf_', 'options_', 'theme_mods_', 'gowild_'];
+        $safe_option_names = ['upload_path', 'upload_url_path'];
+
+        $opts = $wpdb->get_results($wpdb->prepare(
+            "SELECT option_id, option_name, option_value FROM {$wpdb->options}
+            WHERE option_value LIKE %s",
+            $like
+        ));
+
+        foreach ($opts as $o) {
+            $option_name = $o->option_name;
+            $is_safe = in_array($option_name, $safe_option_names);
+            if (!$is_safe) {
+                foreach ($safe_option_prefixes as $prefix) {
+                    if (strpos($option_name, $prefix) === 0) {
+                        $is_safe = true;
+                        break;
+                    }
+                }
+            }
+
+            $excluded_options = ['custom_css_', 'nav_menu_', 'category_children', 'rewrite_rules', 'cron'];
+            $is_excluded = false;
+            foreach ($excluded_options as $excluded) {
+                if (strpos($option_name, $excluded) === 0 || $option_name === $excluded) {
+                    $is_excluded = true;
+                    break;
+                }
+            }
+
+            if (!$is_safe || $is_excluded) {
+                continue;
+            }
+
+            $raw = (string) $o->option_value;
+            $changed = false;
+            $replaced_count = 0;
+
+            $new = self::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
+
+            if ($changed) {
+                $wpdb->update($wpdb->options, ['option_value' => $new], ['option_id' => (int) $o->option_id]);
+                if (!empty($o->option_name)) {
+                    wp_cache_delete($o->option_name, 'options');
+                }
+
+                if (strpos($option_name, 'widget_') === 0) {
+                    $stats['widgets']++;
+                } else {
+                    $stats['options']++;
+                }
+            }
+        }
+
+        // 7. Clear all caches
+        self::flush_builder_caches($attachment_id);
+        $log("Flushed builder and attachment caches for ID: {$attachment_id}");
+
+        return $stats;
+    }
+
+    /**
+     * Centralized backup creation.
+     *
+     * @param int $attachment_id
+     * @return bool
+     */
+    public static function create_backup($attachment_id)
+    {
+        $backup_dir = WP_CONTENT_DIR . '/mraf-backups/' . $attachment_id;
+
+        if (!wp_mkdir_p($backup_dir)) {
+            return false;
+        }
+
+        // Clean existing files in attachment backup folder
+        foreach (glob($backup_dir . '/*') as $path) {
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
+
+        $file = get_attached_file($attachment_id);
+        $meta = wp_get_attachment_metadata($attachment_id);
+        $backup_count = 0;
+
+        if ($file && file_exists($file)) {
+            if (@copy($file, $backup_dir . '/' . basename($file))) {
+                $backup_count++;
+            }
+        }
+
+        if (!empty($meta['sizes']) && is_array($meta['sizes'])) {
+            $base_dir = dirname($file);
+            foreach ($meta['sizes'] as $size) {
+                if (!empty($size['file'])) {
+                    $thumb_path = $base_dir . '/' . $size['file'];
+                    if (file_exists($thumb_path)) {
+                        if (@copy($thumb_path, $backup_dir . '/' . $size['file'])) {
+                            $backup_count++;
+                        }
+                    }
+                }
+            }
+        }
+
+        $backup_data = [
+            'attachment_id' => $attachment_id,
+            'timestamp'     => current_time('timestamp'),
+            'date'          => current_time('mysql'),
+            'original_file' => $file,
+            'original_meta' => $meta,
+            'files_count'   => $backup_count
+        ];
+
+        file_put_contents($backup_dir . '/backup.json', wp_json_encode($backup_data, JSON_PRETTY_PRINT));
+        return true;
+    }
+
+    /**
+     * Restore attachment from backup.
+     *
+     * @param int $attachment_id
+     * @return bool
+     */
+    public static function restore_backup($attachment_id)
+    {
+        $backup_dir = WP_CONTENT_DIR . '/mraf-backups/' . $attachment_id;
+        $json_file = $backup_dir . '/backup.json';
+
+        if (!file_exists($json_file)) {
+            return false;
+        }
+
+        $data = json_decode(file_get_contents($json_file), true);
+        if (!$data || empty($data['original_file'])) {
+            return false;
+        }
+
+        $orig_file = $data['original_file'];
+        $orig_basename = basename($orig_file);
+        $backup_orig = $backup_dir . '/' . $orig_basename;
+
+        if (file_exists($backup_orig)) {
+            @copy($backup_orig, $orig_file);
+            update_attached_file($attachment_id, $orig_file);
+        }
+
+        if (!empty($data['original_meta']['sizes']) && is_array($data['original_meta']['sizes'])) {
+            $base_dir = dirname($orig_file);
+            foreach ($data['original_meta']['sizes'] as $size) {
+                if (!empty($size['file'])) {
+                    $src = $backup_dir . '/' . $size['file'];
+                    if (file_exists($src)) {
+                        @copy($src, $base_dir . '/' . $size['file']);
+                    }
+                }
+            }
+        }
+
+        if (!empty($data['original_meta'])) {
+            wp_update_attachment_metadata($attachment_id, $data['original_meta']);
+        }
+
+        self::flush_builder_caches($attachment_id);
+        return true;
+    }
+
+    /**
+     * Delete backup folder for an attachment.
+     *
+     * @param int $attachment_id
+     * @return bool
+     */
+    public static function delete_backup($attachment_id)
+    {
+        $backup_dir = WP_CONTENT_DIR . '/mraf-backups/' . $attachment_id;
+        if (!is_dir($backup_dir)) {
+            return false;
+        }
+
+        foreach (glob($backup_dir . '/*') as $f) {
+            if (is_file($f)) {
+                @unlink($f);
+            }
+        }
+        @rmdir($backup_dir);
+        return true;
+    }
+
+    /**
+     * Get list of all available backups.
+     *
+     * @return array
+     */
+    public static function get_backups_list()
+    {
+        $base = WP_CONTENT_DIR . '/mraf-backups';
+        if (!is_dir($base)) {
+            return [];
+        }
+
+        $dirs = glob($base . '/*', GLOB_ONLYDIR);
+        $backups = [];
+
+        foreach ($dirs as $dir) {
+            $json = $dir . '/backup.json';
+            if (file_exists($json)) {
+                $info = json_decode(file_get_contents($json), true);
+                if ($info) {
+                    $backups[] = $info;
+                }
+            }
+        }
+
+        usort($backups, function ($a, $b) {
+            return ($b['timestamp'] ?? 0) <=> ($a['timestamp'] ?? 0);
+        });
+
+        return $backups;
+    }
+
+    /**
+     * Build URL replacement pairs (full size + all thumbnail sizes).
+     *
+     * @param string $old_url
+     * @param string $new_url
+     * @param array  $old_meta
+     * @param array  $new_meta
+     * @return array
+     */
+    public static function build_url_replacements($old_url, $new_url, $old_meta = [], $new_meta = [])
+    {
+        $map = [];
+
+        if ($old_url && $new_url && $old_url !== $new_url) {
+            $map[$old_url] = $new_url;
+        }
+
+        $old_dir = self::get_url_directory($old_url);
+        $new_dir = self::get_url_directory($new_url);
+
+        if ($old_dir && !empty($old_meta['sizes'])) {
+            foreach ($old_meta['sizes'] as $size_key => $info) {
+                if (empty($info['file'])) {
+                    continue;
+                }
+                $old_size_url = $old_dir . ltrim($info['file'], '/');
+                $target_new = '';
+
+                if ($new_dir && !empty($new_meta['sizes'][$size_key]['file'])) {
+                    $target_new = $new_dir . ltrim($new_meta['sizes'][$size_key]['file'], '/');
+                } elseif ($new_url) {
+                    $target_new = $new_url;
+                }
+
+                if ($target_new && $old_size_url !== $target_new) {
+                    $map[$old_size_url] = $target_new;
+                }
+            }
+        }
+
+        if ($old_dir && !empty($old_meta['original_image'])) {
+            $old_original = $old_dir . ltrim($old_meta['original_image'], '/');
+            $new_original = '';
+
+            if ($new_dir && !empty($new_meta['original_image'])) {
+                $new_original = $new_dir . ltrim($new_meta['original_image'], '/');
+            } elseif ($new_url) {
+                $new_original = $new_url;
+            }
+
+            if ($new_original && $old_original !== $new_original) {
+                $map[$old_original] = $new_original;
+            }
+        }
+
+        $pairs = [];
+        foreach ($map as $old => $new) {
+            $pairs[] = ['old' => $old, 'new' => $new];
+        }
+
+        return $pairs;
+    }
+
+    /**
+     * Get directory path for a URL.
+     *
+     * @param string $url
+     * @return string
+     */
+    public static function get_url_directory($url)
+    {
+        if (!$url) {
+            return '';
+        }
+        $pos = strrpos($url, '/');
+        if (false === $pos) {
+            return '';
+        }
+        return substr($url, 0, $pos + 1);
+    }
 }

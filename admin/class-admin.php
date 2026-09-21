@@ -457,138 +457,41 @@ class MRAF_Admin
         if (empty($replacements))
             return $stats;
 
-        $search = wp_list_pluck($replacements, 'old');
-        $replace = wp_list_pluck($replacements, 'new');
-        $likes = array_map(function ($old) use ($wpdb) {
-            return '%' . $wpdb->esc_like($old) . '%';
-        }, $search);
-
-        $anything_changed = false;
-
         foreach ($replacements as $pair) {
             $this->dbg($attachment_id, 'Processing pair: ' . $pair['old'] . ' -> ' . $pair['new']);
 
-            $elementor_count = MRAF_Image_Replacer::update_elementor_urls($pair['old'], $pair['new'], $attachment_id);
-            $stats['counts']['elementor'] += $elementor_count;
-            if ($elementor_count > 0) {
-                $stats['elementor'][] = ['old_url' => $pair['old'], 'new_url' => $pair['new'], 'updates' => $elementor_count];
-                $anything_changed = true;
-            }
-
-            $builder_count = MRAF_Image_Replacer::update_page_builder_urls($pair['old'], $pair['new'], $attachment_id);
-            $stats['counts']['builders'] += $builder_count;
-            if ($builder_count > 0) {
-                $stats['builders'][] = ['old_url' => $pair['old'], 'new_url' => $pair['new'], 'updates' => $builder_count];
-                $anything_changed = true;
-            }
-        }
-
-        $content_where = implode(' OR ', array_fill(0, count($likes), 'post_content LIKE %s'));
-        if ($content_where) {
-            $rows = $wpdb->get_results($wpdb->prepare("
-                SELECT ID, post_title, post_type, post_content FROM {$wpdb->posts}
-                WHERE post_status IN ('publish','draft','private','future','pending','inherit')
-                  AND post_type != 'revision' AND ( $content_where )
-            ", ...$likes));
-            foreach ($rows as $r) {
-                $content = str_replace($search, $replace, $r->post_content, $count);
-                if ($count > 0) {
-                    wp_update_post(['ID' => (int) $r->ID, 'post_content' => $content]);
-                    $anything_changed = true;
-                    $stats['posts'][] = ['ID' => (int) $r->ID, 'title' => $r->post_title, 'type' => $r->post_type, 'matches' => $count];
-                    $stats['counts']['posts']++;
-                    $stats['counts']['instances'] += $count;
+            $res = MRAF_Image_Replacer::update_all_references(
+                $pair['old'],
+                $pair['new'],
+                $attachment_id,
+                function ($msg) use ($attachment_id) {
+                    $this->dbg($attachment_id, $msg);
                 }
+            );
+
+            $stats['counts']['posts']     += $res['posts'];
+            $stats['counts']['postmeta']  += $res['meta'];
+            $stats['counts']['elementor'] += $res['elementor'];
+            $stats['counts']['builders']  += $res['builders'];
+            $stats['counts']['options']   += $res['options'];
+            $stats['counts']['instances'] += array_sum($res);
+
+            if ($res['posts'] > 0) {
+                $stats['posts'][] = ['matches' => $res['posts']];
             }
-        }
-
-        $meta_where = implode(' OR ', array_fill(0, count($likes), 'pm.meta_value LIKE %s'));
-        $excluded_meta_keys = ['_elementor_data', '_elementor_draft', '_elementor_css', '_elementor_page_settings', '_elementor_controls_usage', '_elementor_version', 'elementor_data', '_wpb_shortcodes_custom_css', '_fl_builder_data', '_fusion'];
-        $exclude_conditions = [];
-        foreach ($excluded_meta_keys as $key) {
-            $exclude_conditions[] = $wpdb->prepare("pm.meta_key != %s", $key);
-        }
-        $exclude_conditions[] = "pm.meta_key NOT LIKE '_et_pb_%'";
-        $exclude_sql = implode(' AND ', $exclude_conditions);
-
-        if ($meta_where) {
-            $metas = $wpdb->get_results($wpdb->prepare("
-                SELECT pm.meta_id, pm.post_id, pm.meta_key, pm.meta_value, p.post_title, p.post_type
-                FROM {$wpdb->postmeta} pm LEFT JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-                WHERE ( $meta_where ) AND {$exclude_sql}
-            ", ...$likes));
-            foreach ($metas as $m) {
-                $raw = (string) $m->meta_value;
-                $changed = false;
-                $replaced_count = 0;
-                $new = MRAF_Image_Replacer::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
-                if ($changed) {
-                    $wpdb->update($wpdb->postmeta, ['meta_value' => $new], ['meta_id' => (int) $m->meta_id]);
-                    if (isset($m->post_id))
-                        clean_post_cache((int) $m->post_id);
-                    $anything_changed = true;
-                    $matches = max(1, (int) $replaced_count);
-                    $stats['postmeta'][] = ['meta_id' => (int) $m->meta_id, 'post_id' => isset($m->post_id) ? (int) $m->post_id : 0, 'meta_key' => $m->meta_key, 'post_title' => $m->post_title ?? '', 'post_type' => $m->post_type ?? '', 'matches' => $matches];
-                    $stats['counts']['postmeta']++;
-                    $stats['counts']['instances'] += $matches;
-                }
+            if ($res['meta'] > 0) {
+                $stats['postmeta'][] = ['matches' => $res['meta']];
+            }
+            if ($res['elementor'] > 0) {
+                $stats['elementor'][] = ['old_url' => $pair['old'], 'new_url' => $pair['new'], 'updates' => $res['elementor']];
+            }
+            if ($res['builders'] > 0) {
+                $stats['builders'][] = ['old_url' => $pair['old'], 'new_url' => $pair['new'], 'updates' => $res['builders']];
+            }
+            if ($res['options'] > 0) {
+                $stats['options'][] = ['matches' => $res['options']];
             }
         }
-
-        $safe_option_prefixes = ['widget_', 'sidebars_widgets', '_transient_', 'acf_', 'options_', 'theme_mods_', 'gowild_'];
-        $safe_option_names = ['upload_path', 'upload_url_path'];
-
-        $option_where = implode(' OR ', array_fill(0, count($likes), 'option_value LIKE %s'));
-        if ($option_where) {
-            $opts = $wpdb->get_results($wpdb->prepare("
-                SELECT option_id, option_name, option_value FROM {$wpdb->options}
-                WHERE ( $option_where )
-            ", ...$likes));
-            foreach ($opts as $o) {
-                $option_name = $o->option_name;
-
-                $is_safe = in_array($option_name, $safe_option_names);
-                if (!$is_safe) {
-                    foreach ($safe_option_prefixes as $prefix) {
-                        if (strpos($option_name, $prefix) === 0) {
-                            $is_safe = true;
-                            break;
-                        }
-                    }
-                }
-
-                $excluded_options = ['custom_css_', 'nav_menu_', 'category_children', 'rewrite_rules', 'cron'];
-                $is_excluded = false;
-                foreach ($excluded_options as $excluded) {
-                    if (strpos($option_name, $excluded) === 0 || $option_name === $excluded) {
-                        $is_excluded = true;
-                        break;
-                    }
-                }
-
-                if (!$is_safe || $is_excluded) {
-                    continue;
-                }
-
-                $raw = (string) $o->option_value;
-                $changed = false;
-                $replaced_count = 0;
-                $new = MRAF_Image_Replacer::replace_maybe_serialized($raw, $search, $replace, $changed, $replaced_count);
-                if ($changed) {
-                    $wpdb->update($wpdb->options, ['option_value' => $new], ['option_id' => (int) $o->option_id]);
-                    if (!empty($o->option_name))
-                        wp_cache_delete($o->option_name, 'options');
-                    $anything_changed = true;
-                    $matches = max(1, (int) $replaced_count);
-                    $stats['options'][] = ['option_name' => $o->option_name, 'matches' => $matches];
-                    $stats['counts']['options']++;
-                    $stats['counts']['instances'] += $matches;
-                }
-            }
-        }
-
-        if ($anything_changed)
-            MRAF_Image_Replacer::flush_builder_caches($attachment_id);
 
         return $stats;
     }

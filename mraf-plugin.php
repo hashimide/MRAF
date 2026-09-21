@@ -3,7 +3,7 @@
  * Plugin Name:       Media Replace Any Format (MRAF)
  * Plugin URI:        https://yourwebsite.com/mraf-plugin
  * Description:       Replace media files with any image format including WebP. Supports single and bulk replacement with automatic reference updates.
- * Version:           2.0.4
+ * Version:           3.0.0
  * Requires at least: 5.0
  * Requires PHP:      7.4
  * Author:            Hashim Ali
@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('MRAF_VERSION', '2.0.4');
+define('MRAF_VERSION', '3.0.0');
 define('MRAF_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('MRAF_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('MRAF_PLUGIN_BASENAME', plugin_basename(__FILE__));
