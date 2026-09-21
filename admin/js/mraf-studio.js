@@ -48,6 +48,40 @@
         return null;
     }
 
+    /**
+     * Freeze the page behind the modal without moving it.
+     *
+     * Hiding the body scrollbar hands its width back to the viewport, and the
+     * gallery is an auto-fill grid, so it answers by fitting one more column.
+     * Every tile shifts, which reads as the pictures changing when the modal
+     * opens and changing back when it closes. Padding by exactly the width
+     * the scrollbar gave up keeps the layout still.
+     *
+     * @param {boolean} on Whether the modal is open.
+     */
+    function lockScroll(on) {
+        var $body = $('body');
+
+        if (!on) {
+            $body.removeClass('mraf-modal-open').css('padding-right', $body.data('mraf-pad') || '');
+            return;
+        }
+
+        if ($body.hasClass('mraf-modal-open')) {
+            return;
+        }
+
+        var gap = window.innerWidth - document.documentElement.clientWidth;
+
+        $body.data('mraf-pad', $body[0].style.paddingRight || '');
+
+        if (gap > 0) {
+            $body.css('padding-right', (parseFloat($body.css('padding-right')) || 0) + gap + 'px');
+        }
+
+        $body.addClass('mraf-modal-open');
+    }
+
     function toast(message) {
         var $t = $('#mraf-toast');
         if (!$t.length) {
@@ -114,7 +148,7 @@
         $('#mraf-m-go').prop('hidden', false);
         $('#mraf-m-convert').prop('hidden', false);
         $('#mraf-modal').prop('hidden', false);
-        $('body').addClass('mraf-modal-open');
+        lockScroll(true);
 
         if (auto && !$('#mraf-m-convert').prop('disabled')) {
             $('#mraf-m-convert').trigger('click');
@@ -161,7 +195,7 @@
         S.stopped = true;
         S.running = false;
         $('#mraf-modal').prop('hidden', true);
-        $('body').removeClass('mraf-modal-open');
+        lockScroll(false);
     }
 
     function renderHead() {
@@ -396,7 +430,7 @@
             if (res && res.success) {
                 S.pairs[index].file = {
                     filename: res.data.filename,
-                    temp_path: res.data.temp_path,
+                    temp_name: res.data.temp_name,
                     preview_url: res.data.preview_url,
                     size: res.data.size
                 };
@@ -438,7 +472,7 @@
                 if (res && res.success) {
                     uploaded.push({
                         filename: res.data.filename,
-                        temp_path: res.data.temp_path,
+                        temp_name: res.data.temp_name,
                         preview_url: res.data.preview_url,
                         size: res.data.size
                     });
@@ -671,7 +705,7 @@
         } else {
             request = post('mraf_studio_replace_single', {
                 attachment_id: job.id,
-                new_file_path: job.file.temp_path
+                new_file: job.file.temp_name
             });
         }
 
@@ -1128,8 +1162,6 @@
                 loadBackups();
             }
         });
-
-        loadBackups();
 
         // The modal links here with #settings, so honour the hash on load.
         if (window.location.hash === '#settings') {

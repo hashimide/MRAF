@@ -33,7 +33,7 @@ class MRAF_Image_Usage {
      * @param int $attachment_id Attachment ID.
      * @return string
      */
-    public function usage_cache_key( $attachment_id ) {
+    public static function usage_cache_key( $attachment_id ) {
         return 'mraf_usage_' . absint( $attachment_id );
     }
 
@@ -42,8 +42,8 @@ class MRAF_Image_Usage {
      *
      * @param int $attachment_id Attachment ID.
      */
-    public function flush_usage_cache( $attachment_id ) {
-        delete_transient( $this->usage_cache_key( $attachment_id ) );
+    public static function flush_usage_cache( $attachment_id ) {
+        delete_transient( self::usage_cache_key( $attachment_id ) );
     }
 
     /**
@@ -74,7 +74,7 @@ class MRAF_Image_Usage {
                 esc_html__( 'Loading image usage…', 'mraf' ) . '</p>';
         } else {
             $usage = $this->find_image_usage_locations( $post->ID );
-            $html  = $this->render_usage_html( $usage );
+            $html  = $this->render_usage_html( $this->visible_usage( $usage ) );
         }
 
         $form_fields['mraf_usage'] = [
@@ -143,7 +143,7 @@ class MRAF_Image_Usage {
             return $runtime_cache[ $attachment_id ];
         }
 
-        $cache_key = $this->usage_cache_key( $attachment_id );
+        $cache_key = self::usage_cache_key( $attachment_id );
         $cached    = get_transient( $cache_key );
         if ( false !== $cached ) {
             $runtime_cache[ $attachment_id ] = $cached;
@@ -237,27 +237,23 @@ class MRAF_Image_Usage {
             $plain_id = (string) $attachment_id;
             $len      = strlen( $plain_id );
 
-            $serialized_markers = [
-                's:' . $len . ':"' . $plain_id . '"',
+            // Every marker below names the ID as the value of an id key.
+            // Bare forms such as s:3:"123", i:123; or "123" were dropped: they
+            // match any serialised number anywhere in the row, so a report
+            // built from them lists pages that never touch this image.
+            $markers = [
                 '"ID";s:' . $len . ':"' . $plain_id . '"',
                 '"id";s:' . $len . ':"' . $plain_id . '"',
                 '\"ID\";s:' . $len . ':\"' . $plain_id . '\"',
                 '\"id\";s:' . $len . ':\"' . $plain_id . '\"',
-            ];
-            $int_markers = [
-                'i:' . $plain_id . ';',
-                '"ID";i:' . $plain_id,
-                '"id";i:' . $plain_id,
-                '\"ID\";i:' . $plain_id,
-                '\"id\";i:' . $plain_id,
+                '"ID";i:' . $plain_id . ';',
+                '"id";i:' . $plain_id . ';',
+                '\"ID\";i:' . $plain_id . ';',
+                '\"id\";i:' . $plain_id . ';',
             ];
 
-            foreach ( array_merge( $serialized_markers, $int_markers ) as $marker ) {
+            foreach ( $markers as $marker ) {
                 $patterns[] = '%' . $wpdb->esc_like( $marker ) . '%';
-            }
-
-            if ( $len >= 2 ) {
-                $patterns[] = '%' . $wpdb->esc_like( '"' . $plain_id . '"' ) . '%';
             }
         }
 
@@ -327,6 +323,7 @@ class MRAF_Image_Usage {
             WHERE post_status IN ('publish','draft','future','pending','private')
               AND post_type != 'revision'
               AND ( $content_where )
+            LIMIT 50
         ";
 
         $rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$patterns ) );
@@ -364,6 +361,7 @@ class MRAF_Image_Usage {
             WHERE p.post_type != 'revision'
               AND pm.meta_key IN ('_elementor_data','_elementor_page_settings')
               AND ( $meta_where )
+            LIMIT 50
         ";
 
         $rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$patterns ) );
@@ -548,10 +546,55 @@ class MRAF_Image_Usage {
             wp_send_json_error( [ 'message' => __( 'Invalid attachment.', 'mraf' ) ] );
         }
 
+        // A usage report names drafts and private posts, so it is only built
+        // for someone who may edit the attachment in the first place.
+        if ( ! current_user_can( 'edit_post', $attachment_id ) ) {
+            wp_send_json_error( [ 'message' => __( 'Permission denied.', 'mraf' ) ] );
+        }
+
         $usage = $this->find_image_usage_locations( $attachment_id );
         wp_send_json_success( [
-            'html' => $this->render_usage_html( $usage ),
+            'html' => $this->render_usage_html( $this->visible_usage( $usage ) ),
         ] );
+    }
+
+    /**
+     * Drop the places in a usage report the current user may not see.
+     *
+     * The report is cached once per attachment and shared by every user, so
+     * the filtering happens on the way out, never on the way in.
+     *
+     * @param array $usage Usage map as find_image_usage_locations() built it.
+     * @return array
+     */
+    public function visible_usage( array $usage ) {
+        if ( current_user_can( 'edit_others_posts' ) ) {
+            return $usage;
+        }
+
+        foreach ( $usage as $key => $section ) {
+            $items = array_values( array_filter(
+                (array) ( $section['items'] ?? [] ),
+                function ( $item ) {
+                    // Option rows name a setting, not a post, and reading the
+                    // site's settings is an administrator's business.
+                    if ( empty( $item['id'] ) ) {
+                        return current_user_can( 'manage_options' );
+                    }
+
+                    return current_user_can( 'edit_post', (int) $item['id'] );
+                }
+            ) );
+
+            if ( empty( $items ) ) {
+                unset( $usage[ $key ] );
+                continue;
+            }
+
+            $usage[ $key ]['items'] = $items;
+        }
+
+        return $usage;
     }
 
     /**

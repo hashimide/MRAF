@@ -128,7 +128,7 @@ class MRAF_Library_Studio
         $file  = get_attached_file($attachment_id);
         $size  = ($file && file_exists($file)) ? size_format(filesize($file)) : '';
         $label = strtoupper(str_replace('image/', '', $mime));
-        $done  = $mime === 'image/webp' || get_post_meta($attachment_id, '_mraf_converted', true);
+        $done  = MRAF_Media_Studio::is_converted($attachment_id, $mime);
 
         printf(
             '<span class="mraf-badge %1$s">%2$s</span> <span class="mraf-cell-muted">%3$s</span><br><span class="mraf-cell-muted">%4$s</span>',
@@ -326,8 +326,7 @@ class MRAF_Library_Studio
             return $fields;
         }
 
-        $mime = get_post_mime_type($post);
-        $done = $mime === 'image/webp' || get_post_meta($post->ID, '_mraf_converted', true);
+        $done = MRAF_Media_Studio::is_converted($post->ID);
 
         $html = '<div class="mraf-modal-tools" data-id="' . esc_attr($post->ID) . '">';
 
@@ -396,6 +395,10 @@ class MRAF_Library_Studio
             'usageNonce'  => wp_create_nonce('mraf_usage'),
             'editUrlBase' => admin_url('post.php?action=edit&post='),
             'webpSupport' => $this->webp_supported(),
+            // Without these the modal on this screen reports the defaults
+            // rather than the settings the jobs actually run under.
+            'options'     => MRAF_Media_Studio::get_options(),
+            'settingsUrl' => admin_url('upload.php?page=mraf-media-studio#settings'),
             'pendingJob'  => $job && $ids ? ['task' => $job, 'ids' => array_values($ids)] : null,
             'strings'     => [
                 'convert'     => __('Convert to WebP', 'mraf'),
@@ -418,23 +421,7 @@ class MRAF_Library_Studio
      */
     private function webp_supported()
     {
-        if (extension_loaded('imagick') && class_exists('Imagick')) {
-            try {
-                $imagick = new Imagick();
-                if (in_array('WEBP', $imagick->queryFormats(), true)) {
-                    return true;
-                }
-            } catch (\Throwable $e) {
-                // fall through to GD
-            }
-        }
-
-        if (function_exists('gd_info')) {
-            $info = gd_info();
-            return !empty($info['WebP Support']);
-        }
-
-        return false;
+        return MRAF_Media_Studio::webp_available();
     }
 
     /**

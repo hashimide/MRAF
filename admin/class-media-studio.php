@@ -55,6 +55,59 @@ class MRAF_Media_Studio
         return $options;
     }
 
+    /**
+     * The only image types a replacement file is allowed to have.
+     *
+     * Keys are the extension patterns WordPress matches names against, values
+     * are the MIME types the file data itself has to report.
+     *
+     * @return array
+     */
+    public static function allowed_image_types()
+    {
+        return [
+            'jpg|jpeg|jpe' => 'image/jpeg',
+            'png'          => 'image/png',
+            'gif'          => 'image/gif',
+            'webp'         => 'image/webp',
+            'avif'         => 'image/avif',
+        ];
+    }
+
+    /**
+     * The staging directory replacement uploads live in.
+     *
+     * Nothing outside this directory may ever be used as a replacement source,
+     * so the path is built here and never taken from a request.
+     *
+     * @return string Normalised absolute path, no trailing slash.
+     */
+    public static function temp_dir()
+    {
+        $uploads = wp_get_upload_dir();
+
+        return untrailingslashit(wp_normalize_path(trailingslashit($uploads['basedir']) . 'mraf-temp'));
+    }
+
+    /**
+     * Whether an image has already been through the converter.
+     *
+     * A WebP file counts whether or not this plugin made it, which is why the
+     * MIME type is checked alongside the marker meta.
+     *
+     * @param int         $attachment_id Attachment ID.
+     * @param string|null $mime          Known MIME type, to save a lookup.
+     * @return bool
+     */
+    public static function is_converted($attachment_id, $mime = null)
+    {
+        if ($mime === null) {
+            $mime = (string) get_post_mime_type($attachment_id);
+        }
+
+        return $mime === 'image/webp' || (bool) get_post_meta($attachment_id, '_mraf_converted', true);
+    }
+
     public function __construct()
     {
         add_action('admin_menu', [$this, 'add_admin_menu']);
@@ -150,20 +203,45 @@ class MRAF_Media_Studio
         return $this->image_library;
     }
 
+    /**
+     * Whether this server can write WebP at all.
+     *
+     * Three places used to answer this question separately and could disagree
+     * with each other. They all come here now, and the answer is worked out
+     * once per request.
+     *
+     * @return bool
+     */
+    public static function webp_available()
+    {
+        static $supported = null;
+
+        if ($supported !== null) {
+            return $supported;
+        }
+
+        $supported = false;
+
+        if (extension_loaded('imagick') && class_exists('Imagick')) {
+            try {
+                $imagick   = new Imagick();
+                $supported = in_array('WEBP', $imagick->queryFormats(), true);
+            } catch (\Throwable $e) {
+                $supported = false;
+            }
+        }
+
+        if (!$supported && function_exists('gd_info')) {
+            $info      = gd_info();
+            $supported = !empty($info['WebP Support']);
+        }
+
+        return $supported;
+    }
+
     public function is_webp_supported()
     {
-        if ($this->image_library === 'imagick') {
-            try {
-                $imagick = new Imagick();
-                return in_array('WEBP', $imagick->queryFormats());
-            } catch (\Throwable $e) {
-                return false;
-            }
-        } elseif ($this->image_library === 'gd') {
-            $gd_info = gd_info();
-            return !empty($gd_info['WebP Support']);
-        }
-        return false;
+        return self::webp_available();
     }
 
     /**
@@ -177,16 +255,13 @@ class MRAF_Media_Studio
 
         wp_enqueue_media();
 
-        $shared_js_ver  = (@filemtime(MRAF_PLUGIN_DIR . 'admin/js/mraf-shared.js') ?: MRAF_VERSION) . '.' . time();
-        $studio_js_ver  = (@filemtime(MRAF_PLUGIN_DIR . 'admin/js/mraf-studio.js') ?: MRAF_VERSION) . '.' . time();
-        $shared_css_ver = (@filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-shared.css') ?: MRAF_VERSION) . '.' . time();
-        $studio_css_ver = (@filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-studio.css') ?: MRAF_VERSION) . '.' . time();
+        // The file's own timestamp is the version: it changes when the file
+        // changes, and never otherwise, so the browser may cache it.
+        $studio_js_ver  = @filemtime(MRAF_PLUGIN_DIR . 'admin/js/mraf-studio.js') ?: MRAF_VERSION;
+        $studio_css_ver = @filemtime(MRAF_PLUGIN_DIR . 'admin/css/mraf-studio.css') ?: MRAF_VERSION;
 
-        wp_enqueue_script('mraf-shared', MRAF_PLUGIN_URL . 'admin/js/mraf-shared.js', ['jquery'], $shared_js_ver, true);
-        wp_enqueue_script('mraf-studio', MRAF_PLUGIN_URL . 'admin/js/mraf-studio.js', ['jquery', 'mraf-shared'], $studio_js_ver, true);
-
-        wp_enqueue_style('mraf-shared', MRAF_PLUGIN_URL . 'admin/css/mraf-shared.css', [], $shared_css_ver);
-        wp_enqueue_style('mraf-studio', MRAF_PLUGIN_URL . 'admin/css/mraf-studio.css', ['mraf-shared'], $studio_css_ver);
+        wp_enqueue_script('mraf-studio', MRAF_PLUGIN_URL . 'admin/js/mraf-studio.js', ['jquery'], $studio_js_ver, true);
+        wp_enqueue_style('mraf-studio', MRAF_PLUGIN_URL . 'admin/css/mraf-studio.css', [], $studio_css_ver);
 
         wp_localize_script('mraf-studio', 'mrafStudioData', [
             'ajaxUrl'      => admin_url('admin-ajax.php'),
@@ -212,6 +287,36 @@ class MRAF_Media_Studio
     }
 
     /**
+     * Stop a job on an attachment the current user has no business touching.
+     *
+     * upload_files only says a user may add media. It says nothing about whose
+     * media they may rewrite or delete, so every job checks the attachment
+     * itself and answers the request straight away when the answer is no.
+     *
+     * @param int $attachment_id Attachment ID.
+     */
+    private function require_attachment_access($attachment_id)
+    {
+        if (!$attachment_id || get_post_type($attachment_id) !== 'attachment') {
+            wp_send_json_error(['message' => __('Invalid attachment.', 'mraf')]);
+        }
+
+        if (!current_user_can('edit_post', $attachment_id)) {
+            wp_send_json_error(['message' => __('You cannot edit that attachment.', 'mraf')]);
+        }
+    }
+
+    /**
+     * True when the user may only work on media they uploaded themselves.
+     *
+     * @return bool
+     */
+    private function limited_to_own_media()
+    {
+        return !current_user_can('edit_others_posts');
+    }
+
+    /**
      * AJAX: Convert single image to WebP/AVIF.
      */
     public function ajax_convert_single()
@@ -224,6 +329,9 @@ class MRAF_Media_Studio
 
         $attachment_id = absint($_POST['attachment_id'] ?? 0);
         $new_name      = sanitize_file_name(wp_unslash($_POST['new_name'] ?? ''));
+
+        $this->require_attachment_access($attachment_id);
+
         $options       = self::get_options();
 
         $quality         = $options['quality'];
@@ -238,6 +346,17 @@ class MRAF_Media_Studio
             wp_send_json_error(['message' => __('Invalid attachment ID.', 'mraf')]);
         }
 
+        $mime = (string) get_post_mime_type($attachment_id);
+
+        // The browser filters these out, but the endpoint cannot assume it.
+        if (strpos($mime, 'image/') !== 0 || $mime === 'image/svg+xml') {
+            wp_send_json_error(['message' => __('That attachment is not an image MRAF can convert.', 'mraf')]);
+        }
+
+        if ($mime === 'image/webp') {
+            wp_send_json_error(['message' => __('That image is already WebP.', 'mraf')]);
+        }
+
         $file_path = get_attached_file($attachment_id);
         if (!$file_path || !file_exists($file_path)) {
             wp_send_json_error(['message' => __('Original file not found on disk.', 'mraf')]);
@@ -245,7 +364,6 @@ class MRAF_Media_Studio
 
         $old_url  = wp_get_attachment_url($attachment_id);
         $old_meta = wp_get_attachment_metadata($attachment_id);
-        $old_base  = pathinfo($file_path, PATHINFO_FILENAME);
         $old_bytes = (int) (@filesize($file_path) ?: 0);
 
         try {
@@ -263,8 +381,11 @@ class MRAF_Media_Studio
                 }
             }
 
-            // Convert to WebP
-            $conv_result = $this->convert_to_webp($temp_file, $quality);
+            // The name comes from the attachment, never from the staging file
+            // a resize leaves behind, or it ends up as photo.jpg.resized.webp.
+            $webp_target = dirname($file_path) . '/' . pathinfo($file_path, PATHINFO_FILENAME) . '.webp';
+
+            $conv_result = $this->convert_to_webp($temp_file, $quality, $webp_target);
             if (!$conv_result['success']) {
                 throw new Exception($conv_result['message']);
             }
@@ -289,27 +410,9 @@ class MRAF_Media_Studio
                 $this->delete_attachment_files($file_path, $old_meta);
             }
 
-            // Update attachment metadata to WebP
-            require_once ABSPATH . 'wp-admin/includes/image.php';
-            $uploads = wp_get_upload_dir();
-            $new_rel = ltrim(str_replace($uploads['basedir'], '', $webp_path), '/\\');
-
-            update_attached_file($attachment_id, $webp_path);
-            update_post_meta($attachment_id, '_wp_attached_file', $new_rel);
-
-            wp_update_post([
-                'ID'             => $attachment_id,
-                'post_mime_type' => 'image/webp',
-                'guid'           => trailingslashit($uploads['baseurl']) . $new_rel,
-            ]);
-
-            $new_meta = wp_generate_attachment_metadata($attachment_id, $webp_path);
-            if (!empty($new_meta)) {
-                $new_meta['mraf_converted'] = time();
-                wp_update_attachment_metadata($attachment_id, $new_meta);
-            }
-
-            $new_url = wp_get_attachment_url($attachment_id);
+            $adopted  = MRAF_Image_Replacer::adopt_file($attachment_id, $webp_path, 'mraf_converted');
+            $new_meta = $adopted['meta'];
+            $new_url  = $adopted['url'];
 
             // Update content references across database
             $ref_stats = [];
@@ -322,10 +425,11 @@ class MRAF_Media_Studio
                     }
                 }
             } else {
-                MRAF_Image_Replacer::flush_builder_caches($attachment_id);
+                MRAF_Image_Replacer::request_flush($attachment_id);
             }
 
             update_post_meta($attachment_id, '_mraf_converted', current_time('timestamp'));
+            MRAF_Image_Usage::flush_usage_cache($attachment_id);
 
             if ($temp_file !== $file_path && file_exists($temp_file)) {
                 @unlink($temp_file);
@@ -333,14 +437,23 @@ class MRAF_Media_Studio
 
             $new_bytes  = (int) (@filesize($webp_path) ?: 0);
             $saved_here = max(0, $old_bytes - $new_bytes);
+            $ratio      = $old_bytes > 0 ? (int) round((($old_bytes - $new_bytes) / $old_bytes) * 100) : 0;
             $saved_all  = (float) get_option('mraf_bytes_saved', 0) + $saved_here;
             update_option('mraf_bytes_saved', $saved_all, false);
+
+            self::log(sprintf(
+                'Converted #%d to %s (%d%%, %s saved).',
+                $attachment_id,
+                wp_basename($webp_path),
+                $ratio,
+                size_format($saved_here)
+            ));
 
             wp_send_json_success([
                 'message'           => __('Image converted to WebP successfully!', 'mraf'),
                 'attachment_id'     => $attachment_id,
                 'new_url'           => $new_url,
-                'compression_ratio' => $conv_result['compression_ratio'] ?? 0,
+                'compression_ratio' => $ratio,
                 'ref_stats'         => $ref_stats,
                 'bytes_saved'       => $saved_here,
                 'bytes_saved_total' => $saved_all,
@@ -362,37 +475,149 @@ class MRAF_Media_Studio
             wp_send_json_error(['message' => __('Permission denied.', 'mraf')]);
         }
 
-        if (empty($_FILES['file'])) {
+        if (empty($_FILES['file']) || !isset($_FILES['file']['tmp_name'])) {
             wp_send_json_error(['message' => __('No file uploaded.', 'mraf')]);
         }
 
         $file = $_FILES['file'];
-        $uploads = wp_get_upload_dir();
-        $temp_dir = trailingslashit($uploads['basedir']) . 'mraf-temp';
+
+        if (!empty($file['error'])) {
+            wp_send_json_error(['message' => __('The upload did not complete. Check the file size against the server limits.', 'mraf')]);
+        }
+
+        // Only a genuine multipart upload may ever be moved into place.
+        if (!is_uploaded_file($file['tmp_name'])) {
+            wp_send_json_error(['message' => __('No valid upload received.', 'mraf')]);
+        }
+
+        $checked = $this->verify_image_file($file['tmp_name'], (string) ($file['name'] ?? ''));
+
+        if (is_wp_error($checked)) {
+            wp_send_json_error(['message' => $checked->get_error_message()]);
+        }
+
+        $uploads  = wp_get_upload_dir();
+        $temp_dir = self::temp_dir();
 
         if (!wp_mkdir_p($temp_dir)) {
             wp_send_json_error(['message' => __('Could not create temporary upload directory.', 'mraf')]);
         }
 
-        $clean_name = sanitize_file_name($file['name']);
-        $unique_name = wp_unique_filename($temp_dir, $clean_name);
+        // The stored name carries the extension the image data proved, not the
+        // one the browser claimed.
+        $unique_name = wp_unique_filename($temp_dir, $checked['name']);
         $target_path = $temp_dir . '/' . $unique_name;
 
         if (!move_uploaded_file($file['tmp_name'], $target_path)) {
             wp_send_json_error(['message' => __('Failed to move uploaded file.', 'mraf')]);
         }
 
-        $filetype = wp_check_filetype($target_path);
-        $uploads_baseurl = trailingslashit($uploads['baseurl']);
-        $preview_url = $uploads_baseurl . 'mraf-temp/' . $unique_name;
+        $preview_url = trailingslashit($uploads['baseurl']) . 'mraf-temp/' . rawurlencode($unique_name);
 
         wp_send_json_success([
-            'temp_path'   => $target_path,
-            'filename'    => $clean_name,
+            // The browser gets a name, never a server path: the replace call
+            // resolves it back inside the staging directory.
+            'temp_name'   => $unique_name,
+            'filename'    => $checked['name'],
             'preview_url' => $preview_url,
-            'size'        => size_format(filesize($target_path)),
-            'mime_type'   => $filetype['type'],
+            'size'        => size_format((int) filesize($target_path)),
+            'mime_type'   => $checked['type'],
         ]);
+    }
+
+    /**
+     * Confirm a file really is one of the image formats the studio handles.
+     *
+     * The name a browser sends proves nothing, so the file data decides both
+     * the type and the extension, and anything else is refused outright.
+     *
+     * @param string $path Absolute path to the file to inspect.
+     * @param string $name File name to validate the data against.
+     * @return array|WP_Error ['name' => safe file name, 'ext' => extension, 'type' => MIME type]
+     */
+    private function verify_image_file($path, $name)
+    {
+        $allowed = self::allowed_image_types();
+        $name    = sanitize_file_name($name);
+
+        if ($name === '') {
+            return new WP_Error('mraf_no_name', __('That file has no usable name.', 'mraf'));
+        }
+
+        $checked = wp_check_filetype_and_ext($path, $name, $allowed);
+
+        // A name WordPress corrected to match the data wins over the original.
+        if (!empty($checked['proper_filename'])) {
+            $name = sanitize_file_name($checked['proper_filename']);
+        }
+
+        $ext  = isset($checked['ext']) ? strtolower((string) $checked['ext']) : '';
+        $type = isset($checked['type']) ? (string) $checked['type'] : '';
+
+        if ($ext === '' || $type === '' || !in_array($type, $allowed, true)) {
+            return new WP_Error(
+                'mraf_bad_type',
+                __('Only JPG, PNG, GIF, WebP and AVIF images can be used here.', 'mraf')
+            );
+        }
+
+        // Where PHP can read the image header, it has to agree with the type.
+        $size    = @getimagesize($path);
+        $sniffed = is_array($size) && !empty($size['mime']) ? (string) $size['mime'] : '';
+
+        if ($sniffed !== '' && $sniffed !== $type) {
+            return new WP_Error(
+                'mraf_type_mismatch',
+                __('That file does not contain the image format its name claims.', 'mraf')
+            );
+        }
+
+        // Rebuild the name around the proven extension so a second one that a
+        // server might execute cannot survive.
+        $base = pathinfo($name, PATHINFO_FILENAME);
+        $safe = sanitize_file_name($base . '.' . $ext);
+
+        if ($safe === '' || pathinfo($safe, PATHINFO_EXTENSION) === '') {
+            return new WP_Error('mraf_no_name', __('That file has no usable name.', 'mraf'));
+        }
+
+        return ['name' => $safe, 'ext' => $ext, 'type' => $type];
+    }
+
+    /**
+     * Turn a staged file name from a request into an absolute path.
+     *
+     * The name is stripped to a bare file name and the result is resolved with
+     * realpath(), so neither traversal segments nor a symlink can point the
+     * caller at anything outside the staging directory.
+     *
+     * @param string $name File name as the request sent it.
+     * @return string|WP_Error Absolute path to the staged file.
+     */
+    private function staged_file_path($name)
+    {
+        $name = sanitize_file_name(wp_basename(wp_unslash($name)));
+
+        if ($name === '' || $name === '.' || $name === '..') {
+            return new WP_Error('mraf_bad_file', __('Invalid attachment or replacement file.', 'mraf'));
+        }
+
+        $temp_dir = self::temp_dir();
+        $resolved = realpath($temp_dir . '/' . $name);
+        $base     = realpath($temp_dir);
+
+        if ($resolved === false || $base === false) {
+            return new WP_Error('mraf_bad_file', __('That replacement file is no longer available.', 'mraf'));
+        }
+
+        $resolved = wp_normalize_path($resolved);
+        $base     = trailingslashit(wp_normalize_path($base));
+
+        if (strpos($resolved, $base) !== 0 || !is_file($resolved)) {
+            return new WP_Error('mraf_bad_file', __('Invalid attachment or replacement file.', 'mraf'));
+        }
+
+        return $resolved;
     }
 
     /**
@@ -407,23 +632,29 @@ class MRAF_Media_Studio
         }
 
         $attachment_id = absint($_POST['attachment_id'] ?? 0);
-        $new_file_path = wp_normalize_path((string) ($_POST['new_file_path'] ?? ''));
         $options       = self::get_options();
 
         $keep_basename = $options['r_keep_basename'];
         $update_refs   = $options['update_refs'];
         $create_backup = $options['create_backup'];
 
-        if (!$attachment_id || !$new_file_path || !file_exists($new_file_path)) {
-            wp_send_json_error(['message' => __('Invalid attachment or replacement file.', 'mraf')]);
+        $this->require_attachment_access($attachment_id);
+
+        // The request names a staged file, never a path. Anything that does not
+        // resolve to a plain file inside the staging directory is refused.
+        $new_file_path = $this->staged_file_path((string) ($_POST['new_file'] ?? ''));
+
+        if (is_wp_error($new_file_path)) {
+            wp_send_json_error(['message' => $new_file_path->get_error_message()]);
+        }
+
+        $source = $this->verify_image_file($new_file_path, wp_basename($new_file_path));
+
+        if (is_wp_error($source)) {
+            wp_send_json_error(['message' => $source->get_error_message()]);
         }
 
         $uploads_dir = wp_get_upload_dir();
-        $uploads_base = wp_normalize_path(trailingslashit($uploads_dir['basedir']));
-
-        if (strpos($new_file_path, $uploads_base) !== 0) {
-            wp_send_json_error(['message' => __('Invalid file path.', 'mraf')]);
-        }
 
         try {
             global $wpdb;
@@ -448,48 +679,29 @@ class MRAF_Media_Studio
                 MRAF_Image_Replacer::create_backup($attachment_id);
             }
 
-            require_once ABSPATH . 'wp-admin/includes/image.php';
-
             $old_dir_rel = $original_rel ? dirname($original_rel) : '';
             $old_base    = $original_rel ? pathinfo($original_rel, PATHINFO_FILENAME) : 'file';
             $target_dir  = trailingslashit($uploads_dir['basedir']) . ($old_dir_rel && '.' !== $old_dir_rel ? trailingslashit($old_dir_rel) : '');
 
-            $ext_new    = strtolower(pathinfo($new_file_path, PATHINFO_EXTENSION));
-            $base       = $keep_basename ? $old_base : pathinfo($new_file_path, PATHINFO_FILENAME);
-            $final_name = $base . '.' . $ext_new;
+            // The extension is the one the image data proved, and the base is
+            // sanitised, so the written name can only ever be an image.
+            $ext_new    = $source['ext'];
+            $base       = $keep_basename ? $old_base : pathinfo($source['name'], PATHINFO_FILENAME);
+            $final_name = sanitize_file_name($base . '.' . $ext_new);
             $final_path = trailingslashit($target_dir) . $final_name;
+
+            if ($final_name === '' || strtolower(pathinfo($final_name, PATHINFO_EXTENSION)) !== $ext_new) {
+                throw new Exception(__('Could not build a safe file name for the replacement.', 'mraf'));
+            }
 
             // Copy to final location
             if (!@copy($new_file_path, $final_path)) {
                 throw new Exception(__('Could not copy new file to final destination.', 'mraf'));
             }
 
-            // Purge old meta
-            clean_post_cache($attachment_id);
-            if (function_exists('clean_attachment_cache')) {
-                clean_attachment_cache($attachment_id);
-            }
-
-            delete_post_meta($attachment_id, '_wp_attachment_metadata');
-            delete_post_meta($attachment_id, '_wp_attachment_backup_sizes');
-
-            $new_rel = ($old_dir_rel && '.' !== $old_dir_rel ? trailingslashit($old_dir_rel) : '') . $final_name;
-            update_post_meta($attachment_id, '_wp_attached_file', $new_rel);
-
-            $filetype = wp_check_filetype($final_path);
-            $new_url  = trailingslashit($uploads_dir['baseurl']) . $new_rel;
-
-            wp_update_post([
-                'ID'             => $attachment_id,
-                'post_mime_type' => $filetype['type'],
-                'guid'           => $new_url
-            ]);
-
-            $new_meta = wp_generate_attachment_metadata($attachment_id, $final_path);
-            if (!empty($new_meta)) {
-                $new_meta['mraf_replaced'] = time();
-                wp_update_attachment_metadata($attachment_id, $new_meta);
-            }
+            $adopted  = MRAF_Image_Replacer::adopt_file($attachment_id, $final_path, 'mraf_replaced');
+            $new_meta = $adopted['meta'];
+            $new_url  = $adopted['url'];
 
             // Reference replacement
             $ref_stats = [];
@@ -502,13 +714,14 @@ class MRAF_Media_Studio
                     }
                 }
             } else {
-                MRAF_Image_Replacer::flush_builder_caches($attachment_id);
+                MRAF_Image_Replacer::request_flush($attachment_id);
             }
 
-            // Cleanup old file if extension changed
-            if ($original_file && file_exists($original_file) && wp_normalize_path($original_file) !== wp_normalize_path($final_path)) {
-                $this->delete_attachment_files($original_file, $original_meta);
-            }
+            // Retire the old file and any old size whose name the new image
+            // does not reuse. A replacement with different proportions gets
+            // different size file names, so those would otherwise sit in the
+            // uploads folder for good.
+            MRAF_Image_Replacer::delete_stale_files($original_file, $original_meta, $final_path, $new_meta);
 
             // Cleanup temp file
             if (file_exists($new_file_path) && wp_normalize_path($new_file_path) !== wp_normalize_path($final_path)) {
@@ -516,6 +729,9 @@ class MRAF_Media_Studio
             }
 
             update_post_meta($attachment_id, '_mraf_replaced_at', current_time('timestamp'));
+            MRAF_Image_Usage::flush_usage_cache($attachment_id);
+
+            self::log(sprintf('Replaced #%d with %s.', $attachment_id, $final_name));
 
             wp_send_json_success([
                 'message'       => __('Image replaced successfully!', 'mraf'),
@@ -540,6 +756,15 @@ class MRAF_Media_Studio
         }
 
         $backups = MRAF_Image_Replacer::get_backups_list();
+
+        // The list names other people's media, so it only shows what the user
+        // is allowed to act on.
+        $backups = array_values(array_filter($backups, function ($backup) {
+            $id = absint($backup['attachment_id'] ?? 0);
+
+            return $id && current_user_can('edit_post', $id);
+        }));
+
         wp_send_json_success(['backups' => $backups]);
     }
 
@@ -555,13 +780,10 @@ class MRAF_Media_Studio
         }
 
         $attachment_id = absint($_POST['attachment_id'] ?? 0);
-        if (!$attachment_id) {
-            wp_send_json_error(['message' => __('Invalid attachment ID.', 'mraf')]);
-        }
+        $this->require_attachment_access($attachment_id);
 
         $restored = MRAF_Image_Replacer::restore_backup($attachment_id);
         if ($restored) {
-            delete_post_meta($attachment_id, '_mraf_converted');
             wp_send_json_success(['message' => __('Backup restored successfully!', 'mraf')]);
         } else {
             wp_send_json_error(['message' => __('Could not restore backup.', 'mraf')]);
@@ -580,9 +802,7 @@ class MRAF_Media_Studio
         }
 
         $attachment_id = absint($_POST['attachment_id'] ?? 0);
-        if (!$attachment_id) {
-            wp_send_json_error(['message' => __('Invalid attachment ID.', 'mraf')]);
-        }
+        $this->require_attachment_access($attachment_id);
 
         $deleted = MRAF_Image_Replacer::delete_backup($attachment_id);
         if ($deleted) {
@@ -590,6 +810,29 @@ class MRAF_Media_Studio
         } else {
             wp_send_json_error(['message' => __('Could not delete backup.', 'mraf')]);
         }
+    }
+
+    /**
+     * Add a line to the studio's debug log.
+     *
+     * The log used to be read in three places and written in none, so the
+     * Debug Log tab was always empty. Nothing is recorded unless the tab is
+     * switched on, which keeps a bulk run free of the extra writes.
+     *
+     * @param string $message Line to record.
+     */
+    public static function log($message)
+    {
+        if (!get_option('mraf_show_debug_tab', false)) {
+            return;
+        }
+
+        $log   = (string) get_transient(self::DEBUG_KEY);
+        $line  = '[' . current_time('mysql') . '] ' . $message;
+        $lines = array_filter(explode("\n", $log . "\n" . $line));
+
+        // Keep the tail, so a long batch cannot grow the option row forever.
+        set_transient(self::DEBUG_KEY, implode("\n", array_slice($lines, -300)), DAY_IN_SECONDS);
     }
 
     /**
@@ -693,6 +936,14 @@ class MRAF_Media_Studio
         $width  = $meta['width'] ?? ($full ? $full[1] : 0);
         $height = $meta['height'] ?? ($full ? $full[2] : 0);
 
+        // A replacement writes new bytes to the same thumbnail URL, so a
+        // browser that already has it keeps showing the old picture and the
+        // gallery looks like the job did nothing. Stamping the URL with the
+        // time the attachment last changed makes it a new URL exactly when
+        // the image is new, and a cacheable one the rest of the time.
+        $stamp = (int) get_post_modified_time('U', true, $post);
+        $thumb_url = $thumb ? $thumb[0] : wp_get_attachment_url($attachment_id);
+
         return [
             'id'          => (int) $attachment_id,
             'title'       => $post->post_title,
@@ -705,10 +956,10 @@ class MRAF_Media_Studio
             'mime_type'   => $mime,
             'format'      => strtoupper(str_replace('image/', '', (string) $mime)),
             'url'         => wp_get_attachment_url($attachment_id),
-            'thumb'       => $thumb ? $thumb[0] : wp_get_attachment_url($attachment_id),
+            'thumb'       => $thumb_url ? add_query_arg('v', $stamp, $thumb_url) : '',
             'filesize'    => ($file && file_exists($file)) ? size_format(filesize($file)) : '-',
-            'converted'   => $mime === 'image/webp' || (bool) get_post_meta($attachment_id, '_mraf_converted', true),
-            'has_backup'  => file_exists(WP_CONTENT_DIR . '/mraf-backups/' . $attachment_id . '/backup.json'),
+            'converted'   => self::is_converted($attachment_id, $mime),
+            'has_backup'  => file_exists(MRAF_Image_Replacer::backup_dir($attachment_id) . '/backup.json'),
         ];
     }
 
@@ -733,12 +984,20 @@ class MRAF_Media_Studio
         $args = [
             'post_type'      => 'attachment',
             'post_status'    => 'inherit',
-            'post_mime_type' => $type ? $type : 'image',
+            // format_item() drops SVG and anything that is not a bitmap image.
+            // Asking for those types up front keeps the "x of y" count honest.
+            'post_mime_type' => $type ? $type : array_values(self::allowed_image_types()),
             'posts_per_page' => $per,
             'paged'          => $page,
             'orderby'        => 'date',
             'order'          => 'DESC',
         ];
+
+        // The core library hides other people's uploads from users who cannot
+        // edit them, and this gallery is the same library.
+        if ($this->limited_to_own_media()) {
+            $args['author'] = get_current_user_id();
+        }
 
         if ($query) {
             $args['s'] = $query;
@@ -813,6 +1072,12 @@ class MRAF_Media_Studio
         $items = [];
 
         foreach (array_slice($ids, 0, 500) as $id) {
+            // The modal is the door to every job, so it opens only on the
+            // attachments this user is allowed to change.
+            if (!current_user_can('edit_post', $id)) {
+                continue;
+            }
+
             $item = $this->format_item($id);
 
             if ($item) {
@@ -1014,6 +1279,21 @@ class MRAF_Media_Studio
                         </tr>
                     </table>
 
+                    <?php if ($this->server_ignores_htaccess()): ?>
+                        <hr>
+
+                        <h2><?php esc_html_e('Backup protection', 'mraf'); ?></h2>
+                        <p class="description">
+                            <?php
+                            esc_html_e(
+                                'This server does not read .htaccess, so the backup folder is only as private as the web server makes it. Backups are the originals of every image you replaced. Add this to the server configuration and reload it:',
+                                'mraf'
+                            );
+                            ?>
+                        </p>
+                        <pre class="mraf-console"><?php echo esc_html("location ~* /wp-content/mraf-backups/ {\n    deny all;\n    return 404;\n}"); ?></pre>
+                    <?php endif; ?>
+
                     <hr>
 
                     <h2><?php esc_html_e('Media Library', 'mraf'); ?></h2>
@@ -1112,13 +1392,44 @@ class MRAF_Media_Studio
     }
 
     /**
+     * Whether the web server ignores the .htaccess guarding the backups.
+     *
+     * Apache and LiteSpeed read it, IIS reads web.config, and nginx reads
+     * neither. There is no file a plugin can drop in to close that gap, so
+     * the Settings tab says so rather than pretending the folder is private.
+     *
+     * @return bool
+     */
+    private function server_ignores_htaccess()
+    {
+        $software = strtolower((string) ($_SERVER['SERVER_SOFTWARE'] ?? ''));
+
+        if ($software === '') {
+            return false;
+        }
+
+        foreach (['apache', 'litespeed', 'microsoft-iis'] as $reads_a_config_file) {
+            if (strpos($software, $reads_a_config_file) !== false) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Helper: Convert image to WebP using active engine.
      */
-    private function convert_to_webp($source_file, $quality = 85)
+    private function convert_to_webp($source_file, $quality = 85, $output_file = '')
     {
-        $dir = dirname($source_file);
-        $base = pathinfo($source_file, PATHINFO_FILENAME);
-        $output_file = $dir . '/' . $base . '.webp';
+        if ($output_file === '') {
+            $output_file = dirname($source_file) . '/' . pathinfo($source_file, PATHINFO_FILENAME) . '.webp';
+        }
+
+        // Writing over the file being read corrupts it on some engines.
+        if (wp_normalize_path($output_file) === wp_normalize_path($source_file)) {
+            return ['success' => false, 'message' => __('That image is already WebP.', 'mraf')];
+        }
 
         if ($this->image_library === 'imagick') {
             $imagick = new Imagick($source_file);
@@ -1158,15 +1469,14 @@ class MRAF_Media_Studio
             return ['success' => false, 'message' => __('No supported image engine available on server.', 'mraf')];
         }
 
-        $old_size = filesize($source_file);
-        $new_size = file_exists($output_file) ? filesize($output_file) : $old_size;
-        $ratio = $old_size > 0 ? round((($old_size - $new_size) / $old_size) * 100) : 0;
+        if (!file_exists($output_file)) {
+            return ['success' => false, 'message' => __('The image engine wrote no output file.', 'mraf')];
+        }
 
         return [
-            'success'           => true,
-            'output_path'       => $output_file,
-            'compression_ratio' => $ratio,
-            'message'           => sprintf(__('Converted with %d%% compression savings.', 'mraf'), $ratio)
+            'success'     => true,
+            'output_path' => $output_file,
+            'message'     => __('Converted to WebP.', 'mraf'),
         ];
     }
 
@@ -1186,7 +1496,9 @@ class MRAF_Media_Studio
         }
 
         $editor->resize($max_width, null, false);
-        $temp_out = $source_file . '.resized.tmp';
+
+        $ext      = pathinfo($source_file, PATHINFO_EXTENSION);
+        $temp_out = $source_file . '.mraf-resized' . ($ext ? '.' . $ext : '');
         $saved = $editor->save($temp_out);
 
         if (is_wp_error($saved)) {

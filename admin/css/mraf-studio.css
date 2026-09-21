@@ -432,14 +432,36 @@ body[class*="mraf-media-studio"] #wpbody-content {
     padding: 0 16px;
 }
 
+/* The selection bar is a state the screen is in, not another row of filters.
+   It gets its own inset and outline so it reads as a band that appeared,
+   instead of a tint bleeding into both edges of the page. */
 .mraf-bar--sel {
-    background: linear-gradient(180deg, var(--mraf-iris-tint) 0%, #f7f6ff 100%);
-    border-bottom-color: var(--mraf-iris-line);
+    gap: 10px;
+    margin: 8px 0;
+    padding: 10px 14px;
+    border: 1px solid var(--mraf-iris-line);
+    border-radius: var(--mraf-radius-sm);
+    background: var(--mraf-iris-tint);
 }
 
 .mraf-bar--sel strong {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    border-radius: var(--mraf-radius-pill);
+    background: #fff;
+    box-shadow: inset 0 0 0 1px var(--mraf-iris-line);
     color: var(--mraf-iris-ink);
-    font-size: 13px;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The two actions belong together, away from the link buttons on the left. */
+.mraf-bar--sel .button + .button {
+    margin-left: 2px;
+}
+
+.mraf-bar--sel .mraf-linkbtn {
+    color: var(--mraf-iris-ink);
 }
 
 .mraf-grid {
@@ -473,9 +495,11 @@ body[class*="mraf-media-studio"] #wpbody-content {
     box-shadow: var(--mraf-ring);
 }
 
+/* The tick already says "selected", so the card only needs a hairline and a
+   soft halo. An inset ring sat on top of the photo and read as a slab. */
 .mraf-tile.is-selected {
     border-color: var(--mraf-iris);
-    box-shadow: 0 0 0 2px var(--mraf-iris) inset;
+    box-shadow: 0 0 0 3px var(--mraf-iris-tint);
 }
 
 .mraf-tile__shot {
@@ -977,7 +1001,7 @@ body.mraf-modal-open {
 
 .mraf-check {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 10px;
     margin-bottom: 10px;
     padding: 11px 13px;
@@ -994,15 +1018,52 @@ body.mraf-modal-open {
     background: var(--mraf-iris-tint);
 }
 
+/* A label can hold a field as well as words, so its parts line up with each
+   other instead of sitting on the text baseline at different heights. */
+.mraf-check > span {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
 .mraf-check input[type="checkbox"] {
-    margin: 2px 0 0;
-    accent-color: var(--mraf-iris);
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+/* WordPress draws its own box and tick, so accent-color never reaches this
+   checkbox. The box is recoloured and the tick redrawn to match the theme. */
+.mraf-studio .mraf-check input[type="checkbox"]:checked {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-color: var(--mraf-iris);
+    background: var(--mraf-iris);
+}
+
+.mraf-studio .mraf-check input[type="checkbox"]:checked::before {
+    content: "";
+    width: 4px;
+    height: 8px;
+    /* WordPress floats its tick and nudges it with a margin, so both are
+       cleared before the mark is drawn from two borders. */
+    float: none;
+    margin: -2px 0 0;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
 }
 
 .mraf-check input[type="number"] {
-    width: 92px;
-    margin: 0 5px;
-    height: 28px;
+    width: 84px;
+    height: 30px;
+    min-height: 30px;
+    margin: 0;
+    padding: 0 8px;
+    box-sizing: border-box;
+    line-height: 28px;
 }
 
 .mraf-adv {

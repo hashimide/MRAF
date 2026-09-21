@@ -140,7 +140,9 @@ class MRAF_Admin
         delete_transient(self::NOTICES_KEY);
         foreach ($list as $n) {
             $class = ($n['type'] === 'updated') ? 'notice notice-success' : 'notice notice-error';
-            echo '<div class="' . esc_attr($class) . '"><p>' . esc_html($n['message']) . '</p></div>';
+            // The messages are written here, not by a user, and they carry
+            // line breaks and emphasis that esc_html() would print as tags.
+            echo '<div class="' . esc_attr($class) . '"><p>' . wp_kses_post($n['message']) . '</p></div>';
         }
     }
 
@@ -250,13 +252,24 @@ class MRAF_Admin
             return;
         }
 
-        $deleted_files = $this->delete_old_files($old_file, $old_meta);
-        if (!empty($deleted_files)) {
-            $names = array_map('wp_basename', $deleted_files);
-            $this->dbg($attachment_id, sprintf('Removed %d legacy file(s): %s', count($deleted_files), implode(', ', $names)));
-        } else {
-            $this->dbg($attachment_id, 'No legacy files detected to delete.');
+        // A backup before the first byte changes, so a failure halfway through
+        // is recoverable.
+        $backed_up = false;
+
+        if (class_exists('MRAF_Media_Studio')) {
+            $options = MRAF_Media_Studio::get_options();
+
+            if (!empty($options['create_backup'])) {
+                $backed_up = MRAF_Image_Replacer::create_backup($attachment_id);
+                $this->dbg($attachment_id, 'Backup before replacing: ' . ($backed_up ? 'written' : 'failed'));
+            } else {
+                $this->dbg($attachment_id, 'Backups are switched off in Settings.');
+            }
         }
+
+        // The old files are only listed here. Nothing is removed until the
+        // replacement is safely on disk.
+        $old_files = array_map('wp_normalize_path', $this->collect_old_files($old_file, $old_meta));
 
         $base = $keep_basename ? $old_base : $uploaded_base;
         $proposed = $ext_new ? $base . '.' . $ext_new : $base;
@@ -270,29 +283,17 @@ class MRAF_Admin
         $this->dbg($attachment_id, 'Normalized temp: ' . $tmp_normalized);
         $this->dbg($attachment_id, 'Normalized proposed: ' . $proposed_normalized);
 
+        // A name held by one of the files this replacement retires is free:
+        // those files go before the new one takes their place. Any other
+        // occupant belongs to a different attachment and is left alone.
         if ($tmp_normalized === $proposed_normalized) {
             $final_name = $proposed;
             $final_path = $proposed_path;
             $this->dbg($attachment_id, 'Temp file already has the desired name.');
-        } elseif (file_exists($proposed_path)) {
-            $existing_normalized = wp_normalize_path(realpath($proposed_path));
-            if ($existing_normalized === $tmp_normalized) {
-                $final_name = $proposed;
-                $final_path = $proposed_path;
-                $this->dbg($attachment_id, 'Temp file is the same as existing file with desired name.');
-            } else {
-                $temp_holder = $new_tmp_file . '.tmp';
-                if (@rename($new_tmp_file, $temp_holder)) {
-                    $final_name = wp_unique_filename($target_dir, $proposed);
-                    $final_path = trailingslashit($target_dir) . $final_name;
-                    @rename($temp_holder, $new_tmp_file);
-                    $this->dbg($attachment_id, 'Filename conflict detected, using: ' . $final_name);
-                } else {
-                    $final_name = wp_unique_filename($target_dir, $proposed);
-                    $final_path = trailingslashit($target_dir) . $final_name;
-                    $this->dbg($attachment_id, 'Using unique filename: ' . $final_name);
-                }
-            }
+        } elseif (file_exists($proposed_path) && !in_array($proposed_normalized, $old_files, true)) {
+            $final_name = wp_unique_filename($target_dir, $proposed);
+            $final_path = trailingslashit($target_dir) . $final_name;
+            $this->dbg($attachment_id, 'Name taken by another file, using: ' . $final_name);
         } else {
             $final_name = $proposed;
             $final_path = $proposed_path;
@@ -301,82 +302,59 @@ class MRAF_Admin
 
         $this->dbg($attachment_id, 'Target path: ' . $final_path);
 
-        if ($tmp_normalized !== wp_normalize_path($final_path)) {
-            if (!@rename($new_tmp_file, $final_path)) {
-                $this->dbg($attachment_id, 'rename() failed; trying copy+unlink');
-                if (!@copy($new_tmp_file, $final_path)) {
-                    @unlink($new_tmp_file);
-                    $this->add_notice('error', 'Could not move/copy uploaded file to destination.');
-                    $this->dbg($attachment_id, 'copy() failed to: ' . $final_path);
-                    return;
-                }
-                @unlink($new_tmp_file);
-            }
-        } else {
+        // Stage the upload beside its destination first. The old files are
+        // removed only once the new one exists on disk, so an upload that
+        // cannot be written never leaves the attachment with no file at all.
+        $staged_path = $final_path . '.mraf-new';
+
+        if ($tmp_normalized === wp_normalize_path($final_path)) {
+            $staged_path = $final_path;
             $this->dbg($attachment_id, 'No file move needed - already at target path.');
-        }
+        } elseif (!@rename($new_tmp_file, $staged_path)) {
+            $this->dbg($attachment_id, 'rename() failed; trying copy+unlink');
 
-        $this->dbg($attachment_id, 'CRITICAL: Clearing all caches BEFORE metadata update');
-        clean_post_cache($attachment_id);
-        if (function_exists('clean_attachment_cache')) {
-            clean_attachment_cache($attachment_id);
-        }
-        wp_cache_delete($attachment_id, 'posts');
-        wp_cache_delete($attachment_id, 'post_meta');
-        delete_post_meta($attachment_id, '_wp_attachment_metadata');
-        delete_post_meta($attachment_id, '_wp_attachment_backup_sizes');
-        delete_post_meta($attachment_id, '_wp_attached_file');
-        wp_cache_flush();
-        $this->dbg($attachment_id, 'All old metadata and caches purged');
-
-        $new_rel = ($old_dir_rel && '.' !== $old_dir_rel ? trailingslashit($old_dir_rel) : '') . $final_name;
-        update_post_meta($attachment_id, '_wp_attached_file', $new_rel);
-        $new_guid = trailingslashit($uploads['baseurl']) . $new_rel;
-        wp_update_post(['ID' => $attachment_id, 'post_mime_type' => $new_mime, 'guid' => $new_guid]);
-        $this->dbg($attachment_id, 'Core fields updated: ' . $new_rel);
-
-        require_once ABSPATH . 'wp-admin/includes/image.php';
-        $meta = wp_generate_attachment_metadata($attachment_id, $final_path);
-        if (is_wp_error($meta) || empty($meta)) {
-            $this->dbg($attachment_id, 'wp_generate_attachment_metadata failed; trying wp_update_image_subsizes');
-            if (function_exists('wp_update_image_subsizes')) {
-                $ok = wp_update_image_subsizes($attachment_id);
-                $this->dbg($attachment_id, 'wp_update_image_subsizes: ' . ($ok ? 'true' : 'false'));
-                $meta = wp_get_attachment_metadata($attachment_id);
+            if (!@copy($new_tmp_file, $staged_path)) {
+                @unlink($new_tmp_file);
+                $this->add_notice('error', 'Could not move the uploaded file into place. Nothing was changed.');
+                $this->dbg($attachment_id, 'copy() failed to: ' . $staged_path);
+                return;
             }
+
+            @unlink($new_tmp_file);
         }
 
-        if (!empty($meta) && !is_wp_error($meta)) {
-            if (empty($meta['file'])) {
-                $meta['file'] = $new_rel;
-            }
-            // Add timestamp to force cache invalidation
-            $meta['mraf_replaced'] = time();
-            wp_update_attachment_metadata($attachment_id, $meta);
-            $this->dbg($attachment_id, 'Fresh metadata saved with ' . count($meta['sizes'] ?? []) . ' sizes');
+        $deleted_files = $this->delete_old_files($old_file, $old_meta, $staged_path);
+
+        if (!empty($deleted_files)) {
+            $names = array_map('wp_basename', $deleted_files);
+            $this->dbg($attachment_id, sprintf('Removed %d legacy file(s): %s', count($deleted_files), implode(', ', $names)));
         } else {
-            $this->dbg($attachment_id, 'No metadata generated; saving minimal meta.');
-            wp_update_attachment_metadata($attachment_id, ['file' => $new_rel, 'sizes' => [], 'mraf_replaced' => time()]);
+            $this->dbg($attachment_id, 'No legacy files detected to delete.');
         }
 
-        // Get fresh metadata for URL replacement mapping
-        $new_meta = wp_get_attachment_metadata($attachment_id, true);
+        if ($staged_path !== $final_path && !@rename($staged_path, $final_path)) {
+            @unlink($staged_path);
+            $this->dbg($attachment_id, 'CRITICAL: could not move staged file to ' . $final_path);
 
-        clean_post_cache($attachment_id);
-        if (function_exists('clean_attachment_cache')) {
-            clean_attachment_cache($attachment_id);
+            if ($backed_up && MRAF_Image_Replacer::restore_backup($attachment_id)) {
+                $this->add_notice('error', 'Could not put the new file in place. The original was restored from its backup.');
+                $this->dbg($attachment_id, 'Original restored from backup.');
+            } else {
+                $this->add_notice('error', 'Could not put the new file in place, and there was no backup to restore.');
+            }
+
+            return;
         }
-        wp_cache_delete($attachment_id, 'posts');
-        wp_cache_delete($attachment_id, 'post_meta');
-        delete_post_meta($attachment_id, '_wp_attachment_backup_sizes');
 
-        // Build new URL manually from the known new_rel to avoid any caching issues
-        $new_url = $uploads_baseurl . $new_rel;
+        $adopted  = MRAF_Image_Replacer::adopt_file($attachment_id, $final_path, 'mraf_replaced');
+        $new_meta = $adopted['meta'];
+        $new_url  = $adopted['url'];
+
+        $this->dbg($attachment_id, 'Attachment now points at ' . $adopted['rel']);
+        $this->dbg($attachment_id, 'Fresh metadata saved with ' . count($new_meta['sizes'] ?? []) . ' sizes');
 
         update_post_meta($attachment_id, '_mraf_last_replaced', time());
         do_action('mraf_after_image_replaced', $attachment_id, $old_url, $new_url);
-        wp_cache_flush();
-        $this->dbg($attachment_id, 'All caches cleared - metadata and URLs refreshed');
 
         $new_title = pathinfo($final_name, PATHINFO_FILENAME);
         $new_title = str_replace(['-', '_'], ' ', $new_title);
@@ -385,7 +363,7 @@ class MRAF_Admin
         $this->dbg($attachment_id, 'REPLACEMENT: Old URL: ' . $old_url);
         $this->dbg($attachment_id, 'REPLACEMENT: New URL: ' . $new_url);
 
-        $replacements = $this->build_url_replacements($old_url, $new_url, $old_meta, $new_meta);
+        $replacements = MRAF_Image_Replacer::build_url_replacements($old_url, $new_url, $old_meta, $new_meta);
         if ($update_refs && !empty($replacements)) {
             $this->dbg($attachment_id, 'Total URL pairs to replace: ' . count($replacements));
             $stats = $this->replace_urls_everywhere($replacements, $attachment_id);
@@ -407,30 +385,65 @@ class MRAF_Admin
         $cache_instructions .= '4. Wait 2-5 minutes for caches to expire';
         $this->add_notice('updated', $cache_instructions);
 
-        if (function_exists('mraf_flush_usage_cache')) {
-            mraf_flush_usage_cache($attachment_id);
-        }
+        MRAF_Image_Usage::flush_usage_cache($attachment_id);
     }
 
-    private function delete_old_files($old_file_abs, $old_meta)
+    /**
+     * Every file the attachment currently owns: the original and its sizes.
+     *
+     * @param string $old_file_abs Absolute path to the attached file.
+     * @param array  $old_meta     Attachment metadata.
+     * @return array Absolute paths that exist on disk.
+     */
+    private function collect_old_files($old_file_abs, $old_meta)
     {
-        $deleted = [];
+        $files = [];
 
-        if ($old_file_abs && file_exists($old_file_abs) && @unlink($old_file_abs)) {
-            $deleted[] = $old_file_abs;
+        if ($old_file_abs && file_exists($old_file_abs)) {
+            $files[] = $old_file_abs;
         }
 
         if (!empty($old_meta['sizes']) && is_array($old_meta['sizes'])) {
             $dir = pathinfo((string) $old_file_abs, PATHINFO_DIRNAME);
+
             if ($dir && is_dir($dir)) {
                 foreach ($old_meta['sizes'] as $size) {
-                    if (!empty($size['file'])) {
-                        $p = trailingslashit($dir) . $size['file'];
-                        if (file_exists($p) && @unlink($p)) {
-                            $deleted[] = $p;
-                        }
+                    if (empty($size['file'])) {
+                        continue;
+                    }
+
+                    $path = trailingslashit($dir) . $size['file'];
+
+                    if (file_exists($path)) {
+                        $files[] = $path;
                     }
                 }
+            }
+        }
+
+        return $files;
+    }
+
+    /**
+     * Remove the files the attachment is leaving behind.
+     *
+     * @param string $old_file_abs Absolute path to the attached file.
+     * @param array  $old_meta     Attachment metadata.
+     * @param string $keep_path    A path to spare, normally the new file.
+     * @return array Absolute paths that were deleted.
+     */
+    private function delete_old_files($old_file_abs, $old_meta, $keep_path = '')
+    {
+        $deleted = [];
+        $keep    = $keep_path ? wp_normalize_path($keep_path) : '';
+
+        foreach ($this->collect_old_files($old_file_abs, $old_meta) as $path) {
+            if ($keep && wp_normalize_path($path) === $keep) {
+                continue;
+            }
+
+            if (@unlink($path)) {
+                $deleted[] = $path;
             }
         }
 
@@ -445,12 +458,7 @@ class MRAF_Admin
         }));
 
         $stats = [
-            'pairs' => $replacements,
-            'posts' => [],
-            'postmeta' => [],
-            'options' => [],
-            'elementor' => [],
-            'builders' => [],
+            'pairs'  => $replacements,
             'counts' => ['posts' => 0, 'postmeta' => 0, 'options' => 0, 'elementor' => 0, 'builders' => 0, 'instances' => 0],
         ];
 
@@ -475,22 +483,6 @@ class MRAF_Admin
             $stats['counts']['builders']  += $res['builders'];
             $stats['counts']['options']   += $res['options'];
             $stats['counts']['instances'] += array_sum($res);
-
-            if ($res['posts'] > 0) {
-                $stats['posts'][] = ['matches' => $res['posts']];
-            }
-            if ($res['meta'] > 0) {
-                $stats['postmeta'][] = ['matches' => $res['meta']];
-            }
-            if ($res['elementor'] > 0) {
-                $stats['elementor'][] = ['old_url' => $pair['old'], 'new_url' => $pair['new'], 'updates' => $res['elementor']];
-            }
-            if ($res['builders'] > 0) {
-                $stats['builders'][] = ['old_url' => $pair['old'], 'new_url' => $pair['new'], 'updates' => $res['builders']];
-            }
-            if ($res['options'] > 0) {
-                $stats['options'][] = ['matches' => $res['options']];
-            }
         }
 
         return $stats;
@@ -498,124 +490,33 @@ class MRAF_Admin
 
     private function log_replacement_summary($attachment_id, array $stats)
     {
-        $pairs = $stats['pairs'] ?? [];
+        $pairs      = $stats['pairs'] ?? [];
         $pair_total = count($pairs);
+
         if ($pair_total) {
             $this->dbg($attachment_id, sprintf('Replacement pairs (%d):', $pair_total));
+
             foreach (array_slice($pairs, 0, 8) as $pair) {
                 $this->dbg($attachment_id, sprintf('  - %s -> %s', $pair['old'], $pair['new']));
             }
+
             if ($pair_total > 8) {
                 $this->dbg($attachment_id, sprintf('  - ...and %d more pair(s)', $pair_total - 8));
             }
         }
 
-        $counts = $stats['counts'] ?? ['posts' => 0, 'postmeta' => 0, 'options' => 0, 'elementor' => 0, 'builders' => 0, 'instances' => 0];
+        // The replacer reports how many rows each area changed, not which
+        // ones, so the log says exactly that and no more.
+        $counts = $stats['counts'] ?? [];
+
         $this->dbg($attachment_id, sprintf(
             'Content updated: %d post(s), %d meta row(s), %d option(s), %d Elementor page(s), %d page builder(s) | Total replacements: %d',
-            $counts['posts'] ?? 0,
-            $counts['postmeta'] ?? 0,
-            $counts['options'] ?? 0,
-            $counts['elementor'] ?? 0,
-            $counts['builders'] ?? 0,
-            $counts['instances'] ?? 0
+            (int) ($counts['posts'] ?? 0),
+            (int) ($counts['postmeta'] ?? 0),
+            (int) ($counts['options'] ?? 0),
+            (int) ($counts['elementor'] ?? 0),
+            (int) ($counts['builders'] ?? 0),
+            (int) ($counts['instances'] ?? 0)
         ));
-
-        if (!empty($stats['posts'])) {
-            $labels = array_map(function ($post) {
-                return sprintf('#%d %s (%s, %d matches)', $post['ID'], $post['title'] !== '' ? $post['title'] : '(no title)', $post['type'] ?: 'post', $post['matches'] ?? 1);
-            }, $stats['posts']);
-            $this->dbg($attachment_id, 'Posts touched: ' . implode('; ', $labels));
-        } else {
-            $this->dbg($attachment_id, 'Posts touched: none.');
-        }
-
-        if (!empty($stats['postmeta'])) {
-            $labels = array_map(function ($meta) {
-                $post_ref = $meta['post_id'] ? sprintf('post #%d', $meta['post_id']) : 'global';
-                return sprintf('meta_id %d (%s, %s, %d matches)', $meta['meta_id'], $meta['meta_key'] ?: '(key missing)', $post_ref, $meta['matches'] ?? 1);
-            }, $stats['postmeta']);
-            $this->dbg($attachment_id, 'Meta rows touched: ' . implode('; ', $labels));
-        } else {
-            $this->dbg($attachment_id, 'Meta rows touched: none.');
-        }
-
-        if (!empty($stats['options'])) {
-            $labels = array_map(function ($option) {
-                return sprintf('%s (%d matches)', $option['option_name'] ?: '(unnamed option)', $option['matches'] ?? 1);
-            }, $stats['options']);
-            $this->dbg($attachment_id, 'Options touched: ' . implode('; ', $labels));
-        } else {
-            $this->dbg($attachment_id, 'Options touched: none.');
-        }
-
-        if (!empty($stats['elementor'])) {
-            $this->dbg($attachment_id, 'Elementor updates: ' . count($stats['elementor']) . ' page(s)');
-        } else {
-            $this->dbg($attachment_id, 'Elementor updates: none.');
-        }
-    }
-
-    private function build_url_replacements($old_url, $new_url, $old_meta, $new_meta)
-    {
-        $map = [];
-
-        if ($old_url && $new_url && $old_url !== $new_url) {
-            $map[$old_url] = $new_url;
-        }
-
-        $old_dir = $this->get_url_directory($old_url);
-        $new_dir = $this->get_url_directory($new_url);
-
-        if ($old_dir && !empty($old_meta['sizes'])) {
-            foreach ($old_meta['sizes'] as $size_key => $info) {
-                if (empty($info['file']))
-                    continue;
-                $old_size_url = $old_dir . ltrim($info['file'], '/');
-                $target_new = '';
-
-                if ($new_dir && !empty($new_meta['sizes'][$size_key]['file'])) {
-                    $target_new = $new_dir . ltrim($new_meta['sizes'][$size_key]['file'], '/');
-                } elseif ($new_url) {
-                    $target_new = $new_url;
-                }
-
-                if ($target_new && $old_size_url !== $target_new) {
-                    $map[$old_size_url] = $target_new;
-                }
-            }
-        }
-
-        if ($old_dir && !empty($old_meta['original_image'])) {
-            $old_original = $old_dir . ltrim($old_meta['original_image'], '/');
-            $new_original = '';
-
-            if ($new_dir && !empty($new_meta['original_image'])) {
-                $new_original = $new_dir . ltrim($new_meta['original_image'], '/');
-            } elseif ($new_url) {
-                $new_original = $new_url;
-            }
-
-            if ($new_original && $old_original !== $new_original) {
-                $map[$old_original] = $new_original;
-            }
-        }
-
-        $pairs = [];
-        foreach ($map as $old => $new) {
-            $pairs[] = ['old' => $old, 'new' => $new];
-        }
-
-        return $pairs;
-    }
-
-    private function get_url_directory($url)
-    {
-        if (!$url)
-            return '';
-        $pos = strrpos($url, '/');
-        if (false === $pos)
-            return '';
-        return substr($url, 0, $pos + 1);
     }
 }
