@@ -18,7 +18,7 @@ class MRAF_Core
     public function __construct()
     {
         $this->plugin_name = 'mraf';
-        $this->version = defined('MRAF_VERSION') ? MRAF_VERSION : '1.3.2';
+        $this->version = defined('MRAF_VERSION') ? MRAF_VERSION : '3.0.0';
 
         $this->load_dependencies();
         $this->set_locale();
@@ -57,16 +57,13 @@ class MRAF_Core
             return;
         }
 
-        $admin        = new MRAF_Admin($this->get_plugin_name(), $this->get_version());
-        $media_studio = new MRAF_Media_Studio();
-        $image_usage  = new MRAF_Image_Usage();
-        $library      = new MRAF_Library_Studio();
-
-        add_filter('upload_mimes', array($admin, 'allow_webp_mime'));
-        add_action('post_edit_form_tag', array($admin, 'force_multipart_form'));
-        add_action('add_meta_boxes_attachment', array($admin, 'add_metaboxes'));
-        add_action('load-post.php', array($admin, 'maybe_handle_replace_on_edit_screen'));
-        add_action('admin_notices', array($admin, 'admin_notices'));
+        // Each class registers its own hooks in its constructor. The same five
+        // filters used to be added again here, which was simply a second copy
+        // of the list to keep in step.
+        new MRAF_Admin($this->get_plugin_name(), $this->get_version());
+        new MRAF_Media_Studio();
+        new MRAF_Image_Usage();
+        new MRAF_Library_Studio();
     }
 
     public function get_plugin_name()
